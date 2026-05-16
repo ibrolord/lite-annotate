@@ -39,6 +39,17 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     const persisted = await restartedStore.get(postBody.reportId);
     assert.equal(persisted?.report.id, postBody.reportId);
 
+    const dashboard = await app.request('/reports/dashboard');
+    assert.equal(dashboard.status, 200);
+    const dashboardHtml = await dashboard.text();
+    assert.match(dashboardHtml, /Lite Annotate Reports/);
+    assert.match(dashboardHtml, new RegExp(postBody.reportId));
+    assert.match(dashboardHtml, /User profile crashes reading name/);
+    assert.match(dashboardHtml, /button:Load User Profile/);
+    assert.match(dashboardHtml, /button#load-profile/);
+    assert.match(dashboardHtml, new RegExp(`/reports/${postBody.reportId}/handoff`));
+    assert.match(dashboardHtml, /github-markdown: written/);
+
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     assert.equal(handoff.status, 200);
     const handoffBody = await handoff.json();
