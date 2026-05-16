@@ -98,8 +98,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     });
     assert.equal(browserClick.status, 303);
     assert.equal(browserClick.headers.get('location'), `/reports/${posted.reportId}/view#gstack-review`);
-    assert.equal(runnerRequests.length, 2);
-    assert.equal((runnerRequests[1].body as { mode: string }).mode, 'investigate');
+    assert.equal(runnerRequests.length, 1);
 
     const callback = await app.request('/internal/gstack-callback', {
       method: 'POST',
@@ -228,6 +227,8 @@ test('GStack investigation button redirects back to the report and shows queued 
     assert.match(html, /GStack investigation is queued/);
     assert.match(html, /gstack_job_ui_123/);
     assert.match(html, /Runner response/);
+    assert.doesNotMatch(html, /<button class="quiet" type="submit">Investigate with GStack<\/button>/);
+    assert.match(html, /Wait for the runner callback/);
   } finally {
     globalThis.fetch = oldFetch;
     restoreEnv(oldEnv);
@@ -376,6 +377,177 @@ test('GStack QA can request PR permissions only with explicit QA and global PR f
     assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, true);
   } finally {
     globalThis.fetch = oldFetch;
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack investigation reuses an active job instead of replacing it', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-dedupe-'));
+  const oldEnv = snapshotEnv([
+    'MEMORY_DIR',
+    'MEMORY_PROVIDER',
+    'GSTACK_RUNNER_URL',
+    'GSTACK_RUNNER_TOKEN',
+    'GSTACK_CALLBACK_TOKEN',
+    'GSTACK_UI_TRIGGER_ENABLED',
+    'PUBLIC_BASE_URL',
+  ]);
+  const oldFetch = globalThis.fetch;
+  const runnerRequests: unknown[] = [];
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  process.env.GSTACK_RUNNER_URL = 'https://gstack-runner.example.com';
+  process.env.GSTACK_RUNNER_TOKEN = 'runner-secret';
+  process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
+  process.env.GSTACK_UI_TRIGGER_ENABLED = '1';
+  process.env.PUBLIC_BASE_URL = 'https://lite-annotate.example.com';
+
+  globalThis.fetch = async (_input, init) => {
+    runnerRequests.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ jobId: 'gstack_active_123', status: 'queued' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+
+    const first = await app.request(`/reports/${posted.reportId}/gstack/investigate`, { method: 'POST' });
+    const second = await app.request(`/reports/${posted.reportId}/gstack/investigate`, { method: 'POST' });
+    assert.equal(first.status, 202);
+    assert.equal(second.status, 202);
+    assert.equal(runnerRequests.length, 1);
+    assert.equal((await first.json()).investigation.runner.jobId, 'gstack_active_123');
+    assert.equal((await second.json()).investigation.runner.jobId, 'gstack_active_123');
+  } finally {
+    globalThis.fetch = oldFetch;
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack callback rejects unqueued jobs and acknowledges stale callbacks', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-callback-state-'));
+  const oldEnv = snapshotEnv(['MEMORY_DIR', 'MEMORY_PROVIDER', 'GSTACK_CALLBACK_TOKEN']);
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+
+    const unqueued = await app.request('/internal/gstack-callback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer callback-secret',
+      },
+      body: JSON.stringify({
+        jobId: 'gstack_unqueued',
+        reportId: posted.reportId,
+        status: 'passed',
+        commandsRun: ['/investigate'],
+        summary: 'should not store',
+        completedAt: '2026-05-16T12:00:00.000Z',
+      }),
+    });
+    assert.equal(unqueued.status, 409);
+    assert.equal((await unqueued.json()).error, 'job_not_queued');
+
+    await store.update(posted.reportId, (record) => ({
+      ...record,
+      gstackReview: {
+        jobId: 'gstack_current',
+        reportId: posted.reportId,
+        status: 'queued',
+        mode: 'investigate',
+        createdAt: '2026-05-16T12:00:00.000Z',
+        updatedAt: '2026-05-16T12:00:00.000Z',
+      },
+    }));
+
+    const stale = await app.request('/internal/gstack-callback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer callback-secret',
+      },
+      body: JSON.stringify({
+        jobId: 'gstack_old',
+        reportId: posted.reportId,
+        status: 'passed',
+        commandsRun: ['/investigate'],
+        summary: 'stale result',
+        completedAt: '2026-05-16T12:01:00.000Z',
+      }),
+    });
+    assert.equal(stale.status, 200);
+    assert.deepEqual(await stale.json(), {
+      ok: true,
+      ignored: true,
+      reason: 'stale_job_callback',
+      expectedJobId: 'gstack_current',
+      receivedJobId: 'gstack_old',
+    });
+    assert.equal((await store.get(posted.reportId))?.gstackReview?.jobId, 'gstack_current');
+  } finally {
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack evidence prioritizes error console and failed network breadcrumbs', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-evidence-'));
+  const oldEnv = snapshotEnv(['MEMORY_DIR', 'MEMORY_PROVIDER']);
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  fixture.console = [
+    { level: 'log', message: 'startup log', timestamp: '2026-05-16T12:00:00.000Z' },
+    { level: 'error', message: 'login failed: invalid session', timestamp: '2026-05-16T12:00:01.000Z' },
+  ];
+  fixture.network = [
+    { type: 'fetch', method: 'GET', url: '/api/session', status: 200, durationMs: 20, failed: false },
+    { type: 'fetch', method: 'POST', url: '/api/login', status: 401, durationMs: 35, failed: true },
+  ];
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+    const response = await app.request(`/reports/${posted.reportId}/gstack/investigation`);
+    const body = await response.json();
+    const browserEvidence = body.investigation.evidence.find((item: { label: string }) => item.label === 'Browser console');
+    const networkEvidence = body.investigation.evidence.find((item: { label: string }) => item.label === 'Network');
+    assert.equal(browserEvidence.value, 'login failed: invalid session');
+    assert.equal(networkEvidence.value, 'POST /api/login returned 401 (failed)');
+  } finally {
     restoreEnv(oldEnv);
   }
 });
@@ -579,6 +751,37 @@ test('GStack runner requires trusted Lite Annotate callback URL from env', async
     assert.equal(response.status, 400);
     const body = await response.json();
     assert.equal(body.message, 'LITE_ANNOTATE_CALLBACK_URL is required');
+  } finally {
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack runner rejects jobs with an untrusted callback URL', async () => {
+  const oldEnv = snapshotEnv(['GSTACK_RUNNER_TOKEN', 'GSTACK_REPO_ALLOWLIST', 'LITE_ANNOTATE_CALLBACK_URL']);
+  process.env.GSTACK_RUNNER_TOKEN = 'runner-secret';
+  process.env.GSTACK_REPO_ALLOWLIST = 'ibrolord/lite-annotate-demo';
+  process.env.LITE_ANNOTATE_CALLBACK_URL = 'https://lite-annotate.example.com/internal/gstack-callback';
+
+  try {
+    const response = await runnerApp.request('/jobs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer runner-secret',
+      },
+      body: JSON.stringify({
+        reportId: 'bug_123',
+        repo: 'ibrolord/lite-annotate-demo',
+        mode: 'review_fix',
+        allowPr: false,
+        report: { id: 'bug_123' },
+        callbackUrl: 'https://attacker.example.com/callback',
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.message, 'callbackUrl must match LITE_ANNOTATE_CALLBACK_URL');
   } finally {
     restoreEnv(oldEnv);
   }

@@ -378,7 +378,9 @@ function validateRequest(request: GStackReviewRequest): string | null {
   const allowed = process.env.GSTACK_REPO_ALLOWLIST?.split(',').map((item) => item.trim()).filter(Boolean);
   if (!allowed?.length) return 'GSTACK_REPO_ALLOWLIST is required';
   if (!allowed.includes(request.repo)) return `repo is not allowlisted: ${request.repo}`;
-  if (!process.env.LITE_ANNOTATE_CALLBACK_URL) return 'LITE_ANNOTATE_CALLBACK_URL is required';
+  const trustedCallbackUrl = process.env.LITE_ANNOTATE_CALLBACK_URL;
+  if (!trustedCallbackUrl) return 'LITE_ANNOTATE_CALLBACK_URL is required';
+  if (request.callbackUrl !== trustedCallbackUrl) return 'callbackUrl must match LITE_ANNOTATE_CALLBACK_URL';
   return null;
 }
 

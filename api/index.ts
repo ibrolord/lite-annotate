@@ -244,6 +244,15 @@ export function createApp(deps: {
     const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
     const callbackBaseUrl = process.env.GSTACK_CALLBACK_BASE_URL?.replace(/\/+$/, '') ?? publicBaseUrl;
     const wantsHtml = requestPrefersHtml(c.req.raw);
+    if (isActiveGStackReview(record.gstackReview)) {
+      if (wantsHtml) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({
+        reportId: record.report.id,
+        investigation: buildGStackInvestigation(record.report, record.gstackReview),
+      }, 202);
+    }
     if (!callbackBaseUrl) {
       const message = 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required';
       if (wantsHtml) {
@@ -423,8 +432,17 @@ export function createApp(deps: {
 
     const record = await store.get(result.reportId);
     if (!record) return c.json({ error: 'not_found' }, 404);
+    if (!record.gstackReview?.jobId) {
+      return c.json({ error: 'job_not_queued', message: 'No matching GStack job is queued for this report' }, 409);
+    }
     if (record.gstackReview?.jobId && record.gstackReview.jobId !== result.jobId) {
-      return c.json({ error: 'job_mismatch' }, 409);
+      return c.json({
+        ok: true,
+        ignored: true,
+        reason: 'stale_job_callback',
+        expectedJobId: record.gstackReview.jobId,
+        receivedJobId: result.jobId,
+      });
     }
 
     const updated = await store.update(result.reportId, (current) => ({
@@ -1568,13 +1586,13 @@ function buildGStackEvidence(
   result: GStackReviewResult | undefined
 ): Array<{ label: string; value: string; source?: string }> {
   const evidence: Array<{ label: string; value: string; source?: string }> = [];
-  const consoleMessage = report.console[0]?.message;
+  const consoleMessage = primaryConsoleMessage(report);
   if (consoleMessage) evidence.push({ label: 'Browser console', value: consoleMessage, source: 'report.console' });
-  const network = report.network[0];
+  const network = primaryNetworkEvent(report);
   if (network) {
     evidence.push({
       label: 'Network',
-      value: `${network.method} ${network.url} returned ${network.status ?? 'n/a'}`,
+      value: `${network.method} ${network.url} returned ${network.status ?? 'n/a'}${network.failed ? ' (failed)' : ''}`,
       source: 'report.network',
     });
   }
@@ -1646,6 +1664,11 @@ function primaryConsoleMessage(report: LiteReport): string {
     ?? report.console.find((entry) => entry.level === 'warn')?.message
     ?? report.console[0]?.message
     ?? 'No console error captured';
+}
+
+function primaryNetworkEvent(report: LiteReport): LiteReport['network'][number] | undefined {
+  return report.network.find((entry) => entry.failed || (typeof entry.status === 'number' && entry.status >= 400))
+    ?? report.network[0];
 }
 
 function summarizeStoredAutofix(autofix: unknown): {
@@ -1823,12 +1846,15 @@ function renderGStackInvestigationHtml(
     : '<li><span>Evidence</span><strong>Run the investigation to connect browser evidence to repo evidence.</strong></li>';
   const triggerState = getGStackUiTriggerState();
   const qaTriggerState = getGStackQaTriggerState();
-  const investigateAction = triggerState.enabled
+  const active = investigation.status === 'queued' || investigation.status === 'running';
+  const investigateAction = triggerState.enabled && !active
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate">
         <button class="quiet" type="submit">Investigate with GStack</button>
       </form>`
+    : active
+      ? ''
     : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
-  const qaAction = qaTriggerState.enabled
+  const qaAction = qaTriggerState.enabled && !active
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa">
         <button class="quiet" type="submit">Run GStack QA</button>
       </form>`
@@ -2115,6 +2141,10 @@ function mergeQueuedGStackReview(
 ): StoredGStackReviewRecord {
   if (existing?.jobId === queued.jobId && isTerminalGStackReview(existing)) return existing;
   return queued;
+}
+
+function isActiveGStackReview(review: StoredGStackReviewRecord | undefined): review is StoredGStackReviewRecord {
+  return Boolean(review && (review.status === 'queued' || review.status === 'running'));
 }
 
 function buildFailedGStackTrigger(reportId: string, message: string): StoredGStackReviewRecord {
