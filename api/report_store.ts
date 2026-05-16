@@ -67,7 +67,12 @@ export class ReportStore {
 }
 
 export function defaultReportStoreDir(): string {
-  return process.env.REPORT_STORE_DIR || join(process.cwd(), '.lite-annotate', 'reports');
+  return process.env.REPORT_STORE_DIR || join(defaultWritableRootDir(), 'reports');
+}
+
+export function defaultWritableRootDir(): string {
+  if (process.env.VERCEL) return '/tmp/lite-annotate';
+  return join(process.cwd(), '.lite-annotate');
 }
 
 export function safeReportId(reportId: string): string {

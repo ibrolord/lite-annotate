@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { LiteReport } from './report_contract.js';
 import { reportToSearchText } from './report_contract.js';
-import { safeReportId } from './report_store.js';
+import { defaultWritableRootDir, safeReportId } from './report_store.js';
 
 export interface MemoryEntry {
   provider: 'gbrain' | 'github-markdown';
@@ -175,7 +175,7 @@ class GBrainHttpMemoryAdapter implements MemoryAdapter {
 }
 
 class MarkdownMemoryAdapter implements MemoryAdapter {
-  private readonly rootDir = process.env.MEMORY_DIR || join(process.cwd(), '.lite-annotate', 'memory');
+  private readonly rootDir = process.env.MEMORY_DIR || join(defaultWritableRootDir(), 'memory');
   private readonly githubRepo = process.env.GBRAIN_REPO || process.env.GITHUB_REPO || '';
   private readonly githubToken = process.env.GITHUB_TOKEN || '';
 
