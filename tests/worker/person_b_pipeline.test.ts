@@ -25,6 +25,27 @@ module.exports = { formatUserGreeting };
 `
   );
   writeFileSync(join(root, 'src', 'home.js'), `export const route = '/';\n`);
+  writeFileSync(
+    join(root, 'index.html'),
+    `<section class="hero" data-view="home">
+  <div class="hero-copy">
+    <h1>Travel-ready home and carry essentials.</h1>
+  </div>
+</section>
+`
+  );
+  writeFileSync(
+    join(root, 'src', 'styles.css'),
+    `.hero {
+  display: grid;
+}
+
+.hero-copy h1 {
+  font-size: clamp(44px, 7vw, 86px);
+  line-height: 0.95;
+}
+`
+  );
   return root;
 }
 
@@ -57,6 +78,54 @@ test('runPersonBPipeline ranks, diagnoses, patches, and verifies the pinned demo
     assert.equal(result.patch.ok, true);
     assert.equal(result.verification?.ok, true);
     assert.deepEqual(result.verification?.modifiedFiles, ['src/users.js']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runPersonBPipeline can use a model patch generator for visual UI fixes', async () => {
+  const root = makeRepo();
+  try {
+    const result = await runPersonBPipeline({
+      workspacePath: root,
+      report: {
+        title: 'this text is wrapping weirdly',
+        description: 'The hero headline wraps badly on the ecommerce homepage.',
+        url: 'https://lite-annotate-commerce-demo.vercel.app/',
+        route: '/',
+        annotation: {
+          target: 'h1: Travel-ready home and carry essentials.',
+          selector: '.hero-copy h1',
+        },
+      },
+      runPackageScripts: false,
+      codePatchGenerator: async ({ diagnosis, candidates }) => {
+        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
+        assert.ok(styles);
+        assert.ok(diagnosis.targetFiles.includes('src/styles.css'));
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-coding-model',
+          summary: 'Relaxed the hero headline line height and font scale.',
+          files: [
+            {
+              path: 'src/styles.css',
+              content: styles.file.content.replace(
+                'font-size: clamp(44px, 7vw, 86px);\n  line-height: 0.95;',
+                'font-size: clamp(38px, 6vw, 72px);\n  line-height: 1.08;'
+              ),
+            },
+          ],
+        };
+      },
+    });
+
+    assert.equal(result.patch.ok, true);
+    assert.equal(result.patch.source, 'llm');
+    assert.equal(result.patch.model, 'test-coding-model');
+    assert.equal(result.verification?.ok, true);
+    assert.deepEqual(result.verification?.modifiedFiles, ['src/styles.css']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

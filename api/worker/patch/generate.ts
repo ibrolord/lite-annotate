@@ -7,6 +7,10 @@ export interface GeneratedPatch {
   ok: boolean;
   files: StructuredPatchFile[];
   error?: string;
+  source?: 'deterministic' | 'llm';
+  model?: string;
+  summary?: string;
+  risks?: string[];
 }
 
 function targetCandidates(diagnosis: Diagnosis, candidates: RankedCandidateFile[]): RankedCandidateFile[] {
@@ -77,5 +81,5 @@ export function generatePatchFromDiagnosis(
     };
   }
 
-  return { ok: true, files };
+  return { ok: true, files, source: 'deterministic', summary: 'Inserted a narrow missing-object fallback guard.' };
 }

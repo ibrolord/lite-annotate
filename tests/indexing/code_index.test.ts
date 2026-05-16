@@ -37,6 +37,28 @@ export function formatUserGreeting(id) {
   );
 
   writeFileSync(join(root, 'src', 'users.test.js'), `import { formatUserGreeting } from './users.js';\n`);
+  writeFileSync(
+    join(root, 'index.html'),
+    `<section class="hero" data-view="home">
+  <div class="hero-copy">
+    <h1>Travel-ready home and carry essentials.</h1>
+  </div>
+</section>
+`
+  );
+  writeFileSync(
+    join(root, 'src', 'styles.css'),
+    `.hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.hero-copy h1 {
+  font-size: clamp(44px, 7vw, 86px);
+  line-height: 0.95;
+}
+`
+  );
   writeFileSync(join(root, 'package-lock.json'), '{}');
   writeFileSync(join(root, '.env'), 'TOKEN=secret');
   writeFileSync(join(root, 'node_modules', 'ignored', 'users.js'), 'export const ignored = true;');
@@ -45,14 +67,16 @@ export function formatUserGreeting(id) {
   return root;
 }
 
-test('buildCodeIndex extracts JS/TS files and ignores dependencies, build outputs, lockfiles, and env files', () => {
+test('buildCodeIndex extracts app code files and ignores dependencies, build outputs, lockfiles, and env files', () => {
   const root = makeFixtureRepo();
   try {
     const index = buildCodeIndex(root);
     const paths = index.files.map((file) => file.path).sort();
 
     assert.deepEqual(paths, [
+      'index.html',
       'src/components/Dashboard.tsx',
+      'src/styles.css',
       'src/users.js',
       'src/users.test.js',
     ]);
@@ -62,6 +86,33 @@ test('buildCodeIndex extracts JS/TS files and ignores dependencies, build output
     assert.deepEqual(users.exports.sort(), ['formatUserGreeting', 'getUserById']);
     assert.deepEqual(users.functions.sort(), ['formatUserGreeting', 'getUserById']);
     assert.deepEqual(users.nearbyTests, ['src/users.test.js']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rankCandidateFiles uses pinned visual evidence to rank ecommerce HTML and CSS', () => {
+  const root = makeFixtureRepo();
+  try {
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'this text is wrapping weirdly',
+      description: 'The hero headline wraps badly on the ecommerce homepage.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/',
+      route: '/',
+      annotation: {
+        target: 'h1: Travel-ready home and carry essentials.',
+        selector: '.hero-copy h1',
+      },
+      session: [{ type: 'click', target: 'h1: Travel-ready home and carry essentials.' }],
+    });
+
+    const topPaths = ranked.slice(0, 3).map((candidate) => candidate.path);
+    assert.ok(topPaths.includes('index.html'), `expected index.html in top 3, got ${topPaths.join(', ')}`);
+    assert.ok(topPaths.includes('src/styles.css'), `expected src/styles.css in top 3, got ${topPaths.join(', ')}`);
+    assert.ok(
+      ranked.some((candidate) => candidate.path === 'src/styles.css' && candidate.reasons.some((reason) => /selector|stylesheet|visual/i.test(reason)))
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
