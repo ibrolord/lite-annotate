@@ -151,6 +151,8 @@ test('widget prepares html2canvas clones for modern CSS screenshots', async () =
 
   assert.match(cloneCss, /--accent:#2563eb/);
   assert.match(cloneCss, /data-lite-annotate-popover/);
+  assert.doesNotMatch(cloneCss, /data-lite-annotate-marker/);
+  assert.doesNotMatch(cloneCss, /data-lite-annotate-highlight/);
   assert.equal(submitted[0].screenshot.type, 'data-url-or-url');
   assert.match(submitted[0].screenshot.value, /^data:image\/png/);
 });

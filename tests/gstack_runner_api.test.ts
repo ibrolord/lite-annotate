@@ -234,11 +234,12 @@ test('GStack investigation button redirects back to the report and shows queued 
 test('GStack review trigger fails closed when trigger token is not configured', async () => {
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-trigger-token-'));
-  const oldEnv = snapshotEnv(['MEMORY_DIR', 'MEMORY_PROVIDER', 'GSTACK_TRIGGER_TOKEN']);
+  const oldEnv = snapshotEnv(['MEMORY_DIR', 'MEMORY_PROVIDER', 'GSTACK_TRIGGER_TOKEN', 'GSTACK_UI_TRIGGER_ENABLED']);
 
   process.env.MEMORY_DIR = join(root, 'memory');
   process.env.MEMORY_PROVIDER = 'github-markdown';
   delete process.env.GSTACK_TRIGGER_TOKEN;
+  delete process.env.GSTACK_UI_TRIGGER_ENABLED;
 
   const store = new ReportStore(join(root, 'reports'));
   const app = createApp({ store, memory: createMemoryAdapter() });
@@ -261,6 +262,20 @@ test('GStack review trigger fails closed when trigger token is not configured', 
     const body = await response.json();
     assert.equal(body.error, 'gstack_not_configured');
     assert.equal(body.message, 'GSTACK_TRIGGER_TOKEN is not configured');
+
+    const productTrigger = await app.request(`/reports/${posted.reportId}/gstack/investigate`, {
+      method: 'POST',
+    });
+    assert.equal(productTrigger.status, 503);
+    const productBody = await productTrigger.json();
+    assert.equal(productBody.error, 'gstack_not_configured');
+    assert.equal(productBody.message, 'GSTACK_UI_TRIGGER_ENABLED=1 or GSTACK_TRIGGER_TOKEN is required');
+
+    const view = await app.request(`/reports/${posted.reportId}/view`);
+    const html = await view.text();
+    assert.match(html, /GStack investigation is available through the protected API/);
+    assert.doesNotMatch(html, /<button class="safe" type="submit">Investigate with GStack<\/button>/);
+    assert.match(html, /Run a GStack investigation first/);
   } finally {
     restoreEnv(oldEnv);
   }

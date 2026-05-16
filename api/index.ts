@@ -733,6 +733,21 @@ function renderReportHtml(
     .repo-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
     .repo-form button { border: 1px solid var(--line); background: var(--soft); color: var(--ink); }
     .analysis-body { padding: 14px 16px 16px; }
+    .analysis-summary { display: grid; gap: 10px; padding: 14px 16px; }
+    .analysis-summary dl { display: grid; gap: 8px; margin: 0; }
+    .analysis-summary div { display: grid; grid-template-columns: 88px 1fr; gap: 10px; align-items: baseline; }
+    .analysis-summary dt {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .analysis-summary dd { margin: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; }
+    .analysis-details { margin: 0 16px 16px; }
+    .analysis-details summary { padding: 12px; }
+    .analysis-details p { padding: 0 12px 12px; font-size: 13px; }
+    .analysis-details pre { margin: 0 12px 12px; max-height: 320px; }
     .screen-stage { padding: 16px; }
     .screen-frame {
       min-height: 380px;
@@ -971,9 +986,7 @@ function renderReportHtml(
             <h2>Analysis Result</h2>
             <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
           </div>
-          <div class="analysis-body">
-            <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
-          </div>
+          ${renderAnalysisResultHtml(reportId, autofix)}
         </section>
         ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
       </aside>
@@ -1010,6 +1023,30 @@ function renderReportHtml(
       </section>
     </div>
   </main>
+  <script>
+    (() => {
+      const MAX_RAW_CHARS = 120000;
+      document.querySelectorAll('[data-analysis-src]').forEach((details) => {
+        details.addEventListener('toggle', async () => {
+          if (!details.open || details.dataset.loaded === 'true') return;
+          const pre = details.querySelector('[data-analysis-raw]');
+          if (!pre) return;
+          details.dataset.loaded = 'true';
+          pre.textContent = 'Loading analysis result...';
+          try {
+            const response = await fetch(details.dataset.analysisSrc, { headers: { accept: 'application/json' } });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const text = JSON.stringify(await response.json(), null, 2);
+            pre.textContent = text.length > MAX_RAW_CHARS
+              ? text.slice(0, MAX_RAW_CHARS) + '\\n\\n... truncated in browser. Open the JSON endpoint for the complete result.'
+              : text;
+          } catch (err) {
+            pre.textContent = 'Unable to load analysis result: ' + (err instanceof Error ? err.message : String(err));
+          }
+        }, { passive: true });
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -1306,7 +1343,7 @@ function gstackRecommendedAction(
   result: GStackReviewResult | undefined
 ): GStackInvestigationView['recommendedAction'] {
   if (status === 'queued' || status === 'running') return { type: 'wait', label: 'Wait for the runner callback' };
-  if (!result) return { type: 'autofix', label: 'Investigate with GStack' };
+  if (!result) return { type: 'none', label: 'Run a GStack investigation first' };
   const text = `${result.summary} ${result.diagnosis ?? ''}`.toLowerCase();
   if (status === 'failed' || status === 'blocked') return { type: 'manual', label: 'Review raw GStack output' };
   if (text.includes('already fixed') || text.includes('no further code change') || text.includes('no code changes required')) {

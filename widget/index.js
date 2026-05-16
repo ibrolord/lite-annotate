@@ -424,8 +424,6 @@
       '* { box-shadow:none !important; text-shadow:none !important; }',
       '[data-lite-annotate-launcher],',
       '[data-lite-annotate-popover],',
-      '[data-lite-annotate-marker],',
-      '[data-lite-annotate-highlight],',
       '[data-lite-annotate-banner] { display:none !important; }',
     ].join('\n');
     const target = cloneDoc.head || cloneDoc.documentElement || cloneDoc.body;
