@@ -9,7 +9,7 @@ Source of truth for Person A / Person B ownership, current status, and commit-le
 | Lane | Owner scope | Status | Current proof | Next action |
 | --- | --- | --- | --- | --- |
 | Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; native GBrain memory write confirmed; `/reports/dashboard` shows current hosted report | Keep tracker updated if capture/report contract changes |
-| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Hosted worker unblocked; PR-opening proof needs an unfixed target repo state | Commits `69c1f75` through `2f72925`; worker/API tests; hosted handoff exposes Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts for `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; dry-run analysis implemented locally in `0dc53f6`; hosted `POST /reports/bug_81e3cf24-7343-4081-a618-c9a8372f7187/autofix` cloned/indexed `ibrolord/lite-annotate-demo`, ranked `src/users.js`, and wrote a diagnosis-only result after merged demo PR #1 had already guarded the bug; Railpack deployment `e3f90218-e3df-46ab-acb6-0e2eb4f3b26c` includes runtime Git | Run hosted dry-run on the current report, then run normal autofix against a fresh unfixed target repo/branch when PR opening is approved |
+| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Hosted PR-opening proof complete | Commits `69c1f75` through `2f72925`; worker/API tests; hosted handoff exposes Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts for `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; dry-run analysis implemented locally in `0dc53f6`; hosted deployment `7454d1aa-a367-4313-8205-3e4b34b60b52` ran dry-run and PR mode against `ibrolord/lite-annotate-demo-pr-proof`; PR opened: https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 | Review PR #1 or reset the proof repo if the demo needs to be rerun |
 
 ## Person B Start Packet
 
@@ -17,7 +17,7 @@ Person B should be able to start with only:
 
 ```text
 reportId: bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430
-repo: ibrolord/lite-annotate-demo
+repo: ibrolord/lite-annotate-demo-pr-proof
 normalized report JSON: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430
 memory search result: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/memory
 handoff payload: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/handoff
@@ -65,6 +65,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `af0b0fa` | Shared / Memory | Added native GBrain MCP adapter tests and setup docs | Done | `npm test`; `npm run typecheck`; fake MCP server covers OAuth, native write/search, and markdown fallback |
 | `0dc53f6` | Shared / Validation | Added dry-run analysis mode | Done | `npm test`; `npm run typecheck`; `?dryRun=1` verifies without opening a PR |
 | `hosted-person-b-2026-05-16` | Person B / Deploy | Unblocked hosted Person B repo cloning and diagnosis | Partial | Railway env now has target repo/GitHub credentials and `RAILPACK_DEPLOY_APT_PACKAGES=git`; deployment `e3f90218-e3df-46ab-acb6-0e2eb4f3b26c`; live autofix for `bug_81e3cf24-7343-4081-a618-c9a8372f7187` ranked `src/users.js` but did not open a PR because `ibrolord/lite-annotate-demo` already merged fix PR #1 |
+| `hosted-person-b-pr-2026-05-16` | Person B / PR proof | Opened a hosted verified PR from Person B | Done | Proof repo `ibrolord/lite-annotate-demo-pr-proof`; Railway deployment `7454d1aa-a367-4313-8205-3e4b34b60b52`; dry-run returned `verified_no_pr` with verification passing; normal autofix returned `pr_opened`; PR https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 modifies `src/users.js` after `npm run test`, `node --check src/users.js`, and smoke command passed |
 
 ## Gates
 
@@ -82,7 +83,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | Diagnosis | Out of scope | Pass locally |
 | Patch generation | Out of scope | Pass locally |
 | Temp clone verification | Out of scope | Pass locally |
-| GitHub PR | Out of scope | Gate implemented; hosted credentialed runtime configured; PR-opening proof requires a fresh unfixed target because demo PR #1 is already merged |
+| GitHub PR | Out of scope | Pass; hosted credentialed PR opened at https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 |
 
 ## Tracker Rules
 
