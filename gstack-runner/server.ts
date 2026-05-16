@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -14,9 +14,6 @@ interface RunnerJob extends StoredGStackReviewRecord {
 }
 
 const app = new Hono();
-const rootDir = process.env.GSTACK_RUNNER_ROOT || join(process.cwd(), '.lite-annotate', 'gstack-runner');
-const jobsDir = join(rootDir, 'jobs');
-const workDir = join(rootDir, 'work');
 
 app.get('/health', (c) => c.json({ ok: true, service: 'gstack-runner' }));
 
@@ -42,7 +39,7 @@ app.post('/jobs', async (c) => {
     status: 'queued',
     mode: request.mode,
     request,
-    workDir: join(workDir, jobId),
+    workDir: join(runnerWorkDir(), jobId),
     createdAt: now,
     updatedAt: now,
   };
@@ -259,19 +256,67 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function runnerRootDir(): string {
+  return process.env.GSTACK_RUNNER_ROOT || join(process.cwd(), '.lite-annotate', 'gstack-runner');
+}
+
+function runnerJobsDir(): string {
+  return join(runnerRootDir(), 'jobs');
+}
+
+function runnerWorkDir(): string {
+  return join(runnerRootDir(), 'work');
+}
+
 async function saveJob(job: RunnerJob): Promise<void> {
-  await mkdir(jobsDir, { recursive: true });
-  await writeFile(join(jobsDir, `${job.jobId}.json`), `${JSON.stringify(job, null, 2)}\n`, 'utf8');
+  await mkdir(runnerJobsDir(), { recursive: true });
+  await writeFile(join(runnerJobsDir(), `${job.jobId}.json`), `${JSON.stringify(job, null, 2)}\n`, 'utf8');
 }
 
 async function loadJob(jobId: string): Promise<RunnerJob | null> {
   try {
-    const content = await readFile(join(jobsDir, `${safeId(jobId)}.json`), 'utf8');
+    const content = await readFile(join(runnerJobsDir(), `${safeId(jobId)}.json`), 'utf8');
     return JSON.parse(content) as RunnerJob;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
+}
+
+async function recoverInterruptedJobs(): Promise<number> {
+  let filenames: string[];
+  try {
+    filenames = await readdir(runnerJobsDir());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw err;
+  }
+
+  let recovered = 0;
+  for (const filename of filenames) {
+    if (!filename.endsWith('.json')) continue;
+    const job = await loadJob(filename.slice(0, -'.json'.length));
+    if (!job || (job.status !== 'queued' && job.status !== 'running')) continue;
+
+    const statusBeforeRestart = job.status;
+    const now = new Date().toISOString();
+    job.status = 'failed';
+    job.error = `GStack runner restarted before ${statusBeforeRestart} job completed`;
+    job.result = {
+      jobId: job.jobId,
+      reportId: job.reportId,
+      status: 'failed',
+      mode: job.mode,
+      commandsRun: [],
+      summary: job.error,
+      completedAt: now,
+    };
+    job.updatedAt = now;
+    await saveJob(job);
+    await callbackResultWithRetry(job, job.result);
+    recovered += 1;
+  }
+  return recovered;
 }
 
 function safeJob(job: RunnerJob): Record<string, unknown> {
@@ -427,9 +472,17 @@ function errorMessage(err: unknown): string {
 const directRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (directRun) {
   const port = Number.parseInt(process.env.PORT || '3015', 10);
-  serve({ fetch: app.fetch, port }, () => {
-    console.log(`gstack-runner API running on http://localhost:${port}`);
-  });
+  void recoverInterruptedJobs()
+    .then((recovered) => {
+      if (recovered > 0) console.log(`recovered ${recovered} interrupted GStack job(s)`);
+      serve({ fetch: app.fetch, port }, () => {
+        console.log(`gstack-runner API running on http://localhost:${port}`);
+      });
+    })
+    .catch((err) => {
+      console.error(`gstack-runner recovery failed: ${errorMessage(err)}`);
+      process.exit(1);
+    });
 }
 
-export { app, buildRunnerCommandEnv, repoUrl as buildCloneUrl, redactSecrets };
+export { app, buildRunnerCommandEnv, repoUrl as buildCloneUrl, recoverInterruptedJobs, redactSecrets };
