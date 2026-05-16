@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx api/index.ts",
+    "start": "tsx api/index.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -11,10 +12,10 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@hono/node-server": "^1.13.7",
     "@railway/cli": "4.57.1",
-    "hono": "^4.7.7"
+    "hono": "^4.7.7",
+    "tsx": "^4.19.3"
   },
   "devDependencies": {
-    "tsx": "^4.19.3",
     "typescript": "^5.8.3"
   }
 }
