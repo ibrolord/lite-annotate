@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -82,6 +82,52 @@ test('verifyStructuredPatch rejects files outside diagnosis targetFiles before w
 
     assert.equal(result.ok, false);
     assert.match(result.error ?? '', /outside targetFiles/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyStructuredPatch runs available package scripts before smoke checks', () => {
+  const root = makeBrokenUsersWorkspace();
+  try {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        type: 'commonjs',
+        scripts: {
+          typecheck: "node -e \"require('fs').writeFileSync('typecheck-ran.txt', 'yes')\"",
+          build: "node -e \"require('fs').writeFileSync('build-ran.txt', 'yes')\"",
+        },
+      })
+    );
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/users.js'],
+      files: [{ path: 'src/users.js', content: fixedUsersJs }],
+      smokeCommands: [
+        {
+          command: process.execPath,
+          args: [
+            '-e',
+            "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))",
+          ],
+        },
+      ],
+    });
+
+    assert.equal(result.ok, true);
+    assert.ok(existsSync(join(root, 'typecheck-ran.txt')));
+    assert.ok(existsSync(join(root, 'build-ran.txt')));
+    assert.deepEqual(
+      result.commands.map((command) => command.name),
+      [
+        'npm run typecheck',
+        'npm run build',
+        'node --check src/users.js',
+        `${process.execPath} -e const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))`,
+      ]
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -33,6 +33,8 @@ export interface StructuredPatchVerificationInput {
   smokeCommands?: VerificationCommandInput[];
 }
 
+const PACKAGE_SCRIPT_ORDER = ['test', 'typecheck', 'build'] as const;
+
 function normalizeRepoPath(path: string): string | null {
   const normalized = path.trim().replace(/\\/g, '/');
   if (
@@ -79,6 +81,18 @@ function runCommand(cwd: string, command: VerificationCommandInput, displayName?
   }
 }
 
+function packageScripts(workspacePath: string): string[] {
+  const packageJson = join(workspacePath, 'package.json');
+  if (!existsSync(packageJson)) return [];
+
+  try {
+    const parsed = JSON.parse(readFileSync(packageJson, 'utf8')) as { scripts?: Record<string, unknown> };
+    return PACKAGE_SCRIPT_ORDER.filter((script) => typeof parsed.scripts?.[script] === 'string');
+  } catch {
+    return [];
+  }
+}
+
 function validatePatchScope(files: StructuredPatchFile[], targetFiles: string[]): string | null {
   const allowed = new Set(targetFiles.map(normalizeRepoPath));
   if (allowed.has(null)) return 'targetFiles contains an unsafe path';
@@ -115,6 +129,18 @@ export function verifyStructuredPatch(input: StructuredPatchVerificationInput): 
   }
 
   const commands: VerificationCommandResult[] = [];
+  for (const script of packageScripts(workspacePath)) {
+    const result = runCommand(
+      workspacePath,
+      { command: 'npm', args: ['run', script] },
+      `npm run ${script}`
+    );
+    commands.push(result);
+    if (!result.ok) {
+      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+    }
+  }
+
   for (const file of modifiedFiles.filter(isJavaScriptPath)) {
     const result = runCommand(
       workspacePath,
