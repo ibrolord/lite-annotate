@@ -231,7 +231,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
     <header>
       <div>
         <h1>Reports</h1>
-        <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for review and Person B handoff.</p>
+        <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for review and analysis handoff.</p>
       </div>
       <nav class="actions">
         <a class="button" href="/demo">Demo</a>
@@ -248,7 +248,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
             <th>Annotation</th>
             <th>Context</th>
             <th>Memory</th>
-            <th>Worker</th>
+            <th>Analysis</th>
             <th>Links</th>
           </tr>
         </thead>
@@ -287,7 +287,7 @@ function renderReportRow(record: StoredReportRecord): string {
     </td>
     <td>${escapeHtml(context)}</td>
     <td><span class="${memory.ok ? 'pill' : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
-    <td><span class="pill">handoff ready</span></td>
+    <td><span class="pill">${escapeHtml(analysisStatus(record.autofix))}</span></td>
     <td>
       <div class="links">
         <a href="/reports/${encodeURIComponent(report.id)}/view">view</a>
@@ -351,7 +351,10 @@ function renderReportHtml(
 </head>
 <body>
   <h1>Report ${escapeHtml(reportId)}</h1>
-  <p><a href="/reports/${encodeURIComponent(reportId)}">Normalized JSON</a> · <a href="/reports/${encodeURIComponent(reportId)}/handoff">Person B handoff</a></p>
+  <p><a href="/reports/${encodeURIComponent(reportId)}">Normalized JSON</a> · <a href="/reports/${encodeURIComponent(reportId)}/handoff">Analysis handoff</a></p>
+  <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
+    <button type="submit">Run analysis</button>
+  </form>
   <h2>Normalized Report</h2>
   <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
   <h2>Raw Saved Payload</h2>
@@ -360,10 +363,16 @@ function renderReportHtml(
   <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
   <h2>Memory Search</h2>
   <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
-  <h2>Person B Autofix</h2>
+  <h2>Analysis Result</h2>
   <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
 </body>
 </html>`;
+}
+
+function analysisStatus(autofix: unknown): string {
+  if (!autofix || typeof autofix !== 'object') return 'not run';
+  const status = (autofix as { status?: unknown }).status;
+  return typeof status === 'string' ? status : 'recorded';
 }
 
 interface StoredAutofixSummary extends Record<string, unknown> {

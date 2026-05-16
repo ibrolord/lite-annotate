@@ -64,7 +64,7 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
   }
 });
 
-test('POST /reports/:id/autofix stores and exposes Person B job results', async () => {
+test('POST /reports/:id/autofix stores and exposes analysis results', async () => {
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-autofix-api-'));
   const oldMemoryDir = process.env.MEMORY_DIR;
@@ -107,6 +107,13 @@ test('POST /reports/:id/autofix stores and exposes Person B job results', async 
     });
     const postBody = await post.json();
 
+    const viewBefore = await app.request(`/reports/${postBody.reportId}/view`);
+    assert.equal(viewBefore.status, 200);
+    const viewBeforeHtml = await viewBefore.text();
+    assert.match(viewBeforeHtml, /Run analysis/);
+    assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/autofix`));
+    assert.doesNotMatch(viewBeforeHtml, /Person B/);
+
     const autofix = await app.request(`/reports/${postBody.reportId}/autofix`, { method: 'POST' });
     assert.equal(autofix.status, 200);
     const autofixBody = await autofix.json();
@@ -124,6 +131,12 @@ test('POST /reports/:id/autofix stores and exposes Person B job results', async 
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     const handoffBody = await handoff.json();
     assert.equal(handoffBody.autofix.status, 'verified_no_pr');
+
+    const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
+    const viewAfterHtml = await viewAfter.text();
+    assert.match(viewAfterHtml, /Analysis Result/);
+    assert.match(viewAfterHtml, /verified_no_pr/);
+    assert.match(viewAfterHtml, /src\/users\.js/);
 
     const record = await store.get(postBody.reportId);
     assert.equal(record?.autofix?.status, 'verified_no_pr');
