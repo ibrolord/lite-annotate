@@ -244,6 +244,7 @@ PR body should include:
 
 - Root cause.
 - Evidence from the report.
+- Relevant console, network, and session breadcrumbs.
 - GBrain memory used.
 - Files changed.
 - Verification commands.
@@ -285,13 +286,13 @@ Build:
 
 - Hosted widget script.
 - Hosted API endpoint.
-- Report submission with URL, browser info, console errors, screenshot.
+- Report submission with annotation text, URL, browser info, console errors, network breadcrumbs, lightweight session breadcrumbs, and screenshot.
 - Report visibility through logs or a simple report page.
 
 Gate:
 
 ```text
-A public demo page can submit feedback to a public API and show that the report was saved.
+A public demo page can submit feedback to a public API and show that the report was saved with annotation, console, network, session breadcrumbs, and screenshot.
 ```
 
 ### Phase 2: Durable Memory
@@ -345,7 +346,7 @@ Report submitted -> scoped patch passes checks locally -> PR opens with verifica
 1. Open public demo app.
 2. Trigger a visible bug.
 3. Submit feedback through the widget.
-4. Show report saved.
+4. Show report saved with annotation, console, network breadcrumbs, session breadcrumbs, and screenshot.
 5. Show GBrain memory entry or GitHub memory fallback.
 6. Show engineering diagnosis.
 7. Show GitHub PR if stable.
@@ -375,7 +376,7 @@ Report submitted -> scoped patch passes checks locally -> PR opens with verifica
 Suggested parallel tracks:
 
 1. Hosting: public API, env vars, health check.
-2. Widget: capture and submit UX.
+2. Widget: annotation, console, network, session breadcrumbs, screenshot, and submit UX.
 3. Memory: GBrain or GitHub markdown fallback.
 4. Code intelligence: candidate file ranking.
 5. Worker: diagnosis, patch, verification, PR.

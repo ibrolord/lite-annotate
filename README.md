@@ -8,7 +8,7 @@ Lite Annotate is the small version of AnnotateQA:
 
 1. A customer installs one hosted widget script.
 2. A user reports a bug from inside the app.
-3. The widget captures context: URL, browser info, console errors, and screenshot.
+3. The widget captures context: annotation text, URL, browser info, console errors, network breadcrumbs, lightweight session breadcrumbs, and screenshot.
 4. The backend stores the report as durable product memory.
 5. A GStack-powered review worker investigates the report with GBrain context.
 6. The worker returns an engineering diagnosis and, when safe, opens a GitHub PR.

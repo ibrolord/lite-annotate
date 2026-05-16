@@ -20,7 +20,7 @@ Bug reports from users are usually incomplete:
 
 - The report says what felt broken, but not what actually happened.
 - Developers have to reproduce the issue manually.
-- Console errors, route context, and browser state are often missing.
+- Console errors, network failures, route context, session breadcrumbs, and browser state are often missing.
 - AI coding agents start cold because they do not remember prior bugs and fixes.
 - Auto-generated PRs are risky when the agent has weak repo context or edits too broadly.
 
@@ -72,9 +72,12 @@ The app user experiences a bug and needs a low-friction way to report it from in
 2. User clicks the Lite Annotate feedback widget.
 3. User enters a short title and optional details.
 4. Widget captures:
-   - Current URL.
-   - User agent.
+   - User annotation: title and description.
+   - Current URL and route.
+   - User agent and viewport.
    - Console logs/errors.
+   - Network breadcrumbs.
+   - Lightweight session breadcrumbs.
    - Screenshot, if available.
 5. Widget submits the report.
 
@@ -97,9 +100,53 @@ The widget must:
 - Load from a hosted script URL.
 - Render a small feedback button.
 - Open a compact report form.
-- Capture title, description, URL, user agent, console logs, and screenshot.
+- Capture annotation text, URL, user agent, console logs, network breadcrumbs, lightweight session breadcrumbs, and screenshot.
 - Submit to the hosted API.
 - Show submit success or failure.
+
+### Capture Payload
+
+The widget capture payload must include:
+
+```text
+annotation:
+  title
+  description
+  optional selected element / active target
+
+browser:
+  url
+  route/pathname
+  userAgent
+  viewport
+  timestamp
+
+console:
+  console.log/warn/error
+  window.onerror
+  unhandledrejection
+
+network:
+  fetch/XHR URL
+  method
+  status
+  duration
+  failed/error state
+  redacted request/response metadata only
+
+session:
+  last N clicks
+  last N route changes
+  last N input focus/change events without raw typed values
+  timestamped event timeline
+
+visual:
+  screenshot when available
+```
+
+The session capture is a technical breadcrumb trail, not full session replay.
+
+For the hackathon, retain the last 50 console events, last 50 network events, and last 50 session events.
 
 ### API
 
@@ -266,6 +313,7 @@ PR body must include:
 - Bug report summary.
 - Root cause.
 - Evidence.
+- Relevant console, network, and session breadcrumbs.
 - GBrain memory used.
 - Files changed.
 - Verification commands and results.
@@ -399,7 +447,7 @@ The demo must show:
 
 1. Public app with a reproducible bug.
 2. Widget submission.
-3. Saved report.
+3. Saved report with annotation, console, network, session breadcrumbs, and screenshot.
 4. GBrain memory/retrieval.
 5. Engineering diagnosis.
 6. GitHub PR if stable.
@@ -415,6 +463,7 @@ The demo must have a backup:
 For the hackathon:
 
 - Report submitted from public page.
+- Report includes annotation, console, network, and lightweight session breadcrumbs.
 - Memory entry created.
 - Similar bug retrieval works.
 - Candidate file ranking puts `src/users.js` in top 3 for the pinned demo bug.
