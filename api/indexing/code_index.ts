@@ -115,6 +115,10 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+function orderedUnique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
 function extractAll(content: string, pattern: RegExp, group = 1): string[] {
   const values: string[] = [];
   for (const match of content.matchAll(pattern)) {
@@ -301,7 +305,7 @@ function stackTracePaths(report: ReportLike): string[] {
     text,
     /(?:^|[^A-Za-z0-9_./-])((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g
   );
-  return unique([...urlPaths, ...relativePaths]);
+  return orderedUnique([...urlPaths, ...relativePaths]);
 }
 
 function addScore(
@@ -327,9 +331,10 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
       const lowerContent = file.content.toLowerCase();
       const basenameToken = baseWithoutTestSuffix(file.path).toLowerCase();
 
-      for (const stackPath of stackPaths) {
+      for (const [index, stackPath] of stackPaths.entries()) {
         if (file.path === stackPath || file.path.endsWith(`/${stackPath}`)) {
-          addScore(state, 2600, `stack trace references ${stackPath}`);
+          const points = index === 0 ? 5000 : Math.max(1600, 3200 - index * 400);
+          addScore(state, points, `stack trace references ${stackPath}`);
         }
       }
 
