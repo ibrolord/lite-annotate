@@ -136,8 +136,9 @@ function buildClaudePrompt(request: GStackReviewRequest): string {
     : request.mode === 'ship'
       ? 'Use /investigate first, then /ship only if verification passes and allowPr is true.'
       : request.mode === 'qa'
-        ? 'Use /investigate first. Use /qa only if the report includes enough runnable app or browser-test context; otherwise explain the QA limitation.'
+        ? 'Use /investigate first, then run /qa. Treat this as a real QA workflow, not investigation-only. Use the report URL, route, annotation, console, network breadcrumbs, and cloned repo to reproduce or validate the issue. If allowPr is false, run /qa in report-only mode: do not edit files, commit, push, or open a PR. If allowPr is true, /qa may make scoped fixes, run verification, commit, and open a PR when the issue is confirmed. If /qa cannot run because required app setup or credentials are missing, return status "blocked" and explain the missing prerequisite instead of silently skipping /qa.'
         : 'Use /investigate first, then /review to validate the proposed fix or patch context.';
+  const expectedCommands = request.mode === 'qa' ? '["/investigate", "/qa"]' : '["/investigate"]';
 
   return `Load gstack.
 
@@ -155,6 +156,7 @@ Installed GStack workflow skills available when applicable:
 
 Rules:
 - Do not invent GStack evidence. Only list commands or skills you actually used.
+- For requested workflow "qa", the expected workflow is /investigate followed by /qa. Do not return an investigation-only result unless /qa is blocked, and mark blocked with the missing prerequisite if so.
 - Do not push or open a PR unless allowPr is true and verification passes.
 - Keep changes scoped to the target repo and the report's likely files.
 - Return a single JSON object between RESULT_JSON_START and RESULT_JSON_END.
@@ -174,7 +176,7 @@ ${JSON.stringify({
 Expected JSON shape:
 {
   "status": "passed" | "failed" | "blocked",
-  "commandsRun": ["/investigate"],
+  "commandsRun": ${expectedCommands},
   "headline": "one-sentence user-facing result",
   "summary": "short plain-English result",
   "rootCause": "user-facing root cause",

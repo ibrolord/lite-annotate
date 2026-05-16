@@ -21,6 +21,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     'GSTACK_TRIGGER_TOKEN',
     'GSTACK_UI_TRIGGER_ENABLED',
     'GSTACK_QA_UI_TRIGGER_ENABLED',
+    'GSTACK_QA_ALLOW_PR',
     'GSTACK_ALLOW_PR',
     'PUBLIC_BASE_URL',
   ]);
@@ -257,6 +258,7 @@ test('GStack QA button creates a qa job without PR permissions by default', asyn
   process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
   process.env.GSTACK_UI_TRIGGER_ENABLED = '1';
   process.env.GSTACK_QA_UI_TRIGGER_ENABLED = '1';
+  delete process.env.GSTACK_QA_ALLOW_PR;
   process.env.GSTACK_ALLOW_PR = '1';
   process.env.PUBLIC_BASE_URL = 'https://lite-annotate.example.com';
 
@@ -309,6 +311,69 @@ test('GStack QA button creates a qa job without PR permissions by default', asyn
     assert.equal(investigation.status, 200);
     const investigationBody = await investigation.json();
     assert.equal(investigationBody.investigation.runner.workflow, 'qa');
+  } finally {
+    globalThis.fetch = oldFetch;
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack QA can request PR permissions only with explicit QA and global PR flags', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-qa-pr-ui-'));
+  const oldEnv = snapshotEnv([
+    'MEMORY_DIR',
+    'MEMORY_PROVIDER',
+    'GSTACK_RUNNER_URL',
+    'GSTACK_RUNNER_TOKEN',
+    'GSTACK_CALLBACK_TOKEN',
+    'GSTACK_UI_TRIGGER_ENABLED',
+    'GSTACK_QA_UI_TRIGGER_ENABLED',
+    'GSTACK_QA_ALLOW_PR',
+    'GSTACK_ALLOW_PR',
+    'PUBLIC_BASE_URL',
+  ]);
+  const oldFetch = globalThis.fetch;
+  const runnerRequests: Array<{ body: unknown }> = [];
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  process.env.GSTACK_RUNNER_URL = 'https://gstack-runner.example.com';
+  process.env.GSTACK_RUNNER_TOKEN = 'runner-secret';
+  process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
+  process.env.GSTACK_UI_TRIGGER_ENABLED = '1';
+  process.env.GSTACK_QA_UI_TRIGGER_ENABLED = '1';
+  process.env.GSTACK_QA_ALLOW_PR = '1';
+  process.env.GSTACK_ALLOW_PR = '1';
+  process.env.PUBLIC_BASE_URL = 'https://lite-annotate.example.com';
+
+  globalThis.fetch = async (_input, init) => {
+    runnerRequests.push({ body: JSON.parse(String(init?.body)) });
+    return new Response(JSON.stringify({ jobId: 'gstack_job_qa_pr_123', status: 'queued' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+
+    const create = await app.request(`/reports/${posted.reportId}/gstack/qa`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+
+    assert.equal(create.status, 202);
+    assert.equal(runnerRequests.length, 1);
+    assert.equal((runnerRequests[0].body as { mode: string }).mode, 'qa');
+    assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, true);
   } finally {
     globalThis.fetch = oldFetch;
     restoreEnv(oldEnv);

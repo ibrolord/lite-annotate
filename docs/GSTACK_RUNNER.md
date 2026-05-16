@@ -127,6 +127,7 @@ GSTACK_CALLBACK_TOKEN=<same shared secret as runner LITE_ANNOTATE_CALLBACK_TOKEN
 GSTACK_ALLOW_PR=0
 GSTACK_UI_TRIGGER_ENABLED=0
 GSTACK_QA_UI_TRIGGER_ENABLED=0
+GSTACK_QA_ALLOW_PR=0
 ```
 
 Set `GSTACK_ALLOW_PR=1` only when remote GStack jobs are allowed to open PRs.
@@ -141,9 +142,12 @@ started through `POST /reports/:id/gstack/investigate` with
 Set `GSTACK_QA_UI_TRIGGER_ENABLED=1` only when the report page should show and
 allow the unauthenticated GStack QA button. Otherwise, QA jobs can still be
 started through `POST /reports/:id/gstack/qa` with
-`Authorization: Bearer $GSTACK_TRIGGER_TOKEN`. The product QA route sends
-`mode: "qa"` with `allowPr: false` by default so the runner can verify and report
-without opening a PR.
+`Authorization: Bearer $GSTACK_TRIGGER_TOKEN`.
+
+The product QA route sends `mode: "qa"` and keeps `allowPr: false` by default.
+Set both `GSTACK_ALLOW_PR=1` and `GSTACK_QA_ALLOW_PR=1` only when the QA button
+is allowed to run the full PR-capable GStack `/qa` workflow. With either flag
+off, the runner must treat `/qa` as report-only and must not push or open a PR.
 
 Then the product flow is:
 
@@ -156,7 +160,7 @@ POST /reports/:id/gstack/investigate
 
 POST /reports/:id/gstack/qa
   -> remote runner /jobs
-  -> runner executes Claude Code + GStack /qa where runnable app context exists
+  -> runner executes Claude Code + GStack /investigate then /qa
   -> runner callback stores QA result
   -> GET /reports/:id/gstack/investigation returns the latest UI-ready GStack evidence
 ```

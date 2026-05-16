@@ -323,7 +323,7 @@ export function createApp(deps: {
         reportId: record.report.id,
         repo: record.report.repo,
         mode: 'qa',
-        allowPr: false,
+        allowPr: gstackQaAllowsPr(),
         report: record.report,
         reportUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}` : undefined,
         memoryUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/memory` : undefined,
@@ -2058,6 +2058,10 @@ function getGStackQaTriggerState(): { enabled: boolean; message: string } {
     };
   }
   return { enabled: true, message: 'GStack QA can be started from this report.' };
+}
+
+function gstackQaAllowsPr(): boolean {
+  return process.env.GSTACK_ALLOW_PR === '1' && process.env.GSTACK_QA_ALLOW_PR === '1';
 }
 
 function requireGStackProductTrigger(
