@@ -15,6 +15,7 @@ import {
 } from './gstack_runner.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
+import { runReportTriage, type ReportTriage } from './triage.js';
 import type { LiteReport } from './report_contract.js';
 import type { AutofixStageEvent, AutofixStageReporter } from './worker/person_b_pipeline.js';
 
@@ -45,6 +46,7 @@ export function createApp(deps: {
   store?: ReportStore;
   memory?: MemoryAdapter;
   autofixRunner?: (reportId: string, report: LiteReport, context: AutofixRunnerContext) => Promise<unknown>;
+  triageRunner?: (report: LiteReport) => Promise<ReportTriage>;
 } = {}) {
   const app = new Hono();
   const store = deps.store ?? new ReportStore();
@@ -59,6 +61,7 @@ export function createApp(deps: {
         onStage: context.onStage,
       });
     });
+  const triageRunner = deps.triageRunner ?? runReportTriage;
 
   app.use('*', cors());
 
@@ -189,13 +192,14 @@ export function createApp(deps: {
       memoryImpact,
       agentComparison,
       memoryReceipts,
+      triage: record.triage ?? null,
       autofix: record.autofix ?? null,
     });
   });
 
   app.get('/reports/:id/view', async (c) => {
     const record = await store.get(c.req.param('id'));
-    if (!record) return c.html('<h1>Report not found</h1>', 404);
+    if (!record) return c.html(render404Html(c.req.param('id')), 404);
     const similar = await memory.searchSimilar(record.report);
     const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
     const agentComparison = buildAgentComparison(memoryImpact, record.autofix ?? null);
@@ -209,9 +213,58 @@ export function createApp(deps: {
       memoryImpact,
       agentComparison,
       memoryReceipts,
+      record.triage ?? null,
       record.autofix ?? null,
       record.gstackReview ?? null
     ));
+  });
+
+  app.get('/reports/:id/triage', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    return c.json({ reportId: record.report.id, triage: record.triage ?? null });
+  });
+
+  app.post('/reports/:id/triage', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    try {
+      const triage = await triageRunner(record.report);
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        triage,
+        updatedAt: new Date().toISOString(),
+      }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
+      }
+      return c.json({ reportId: record.report.id, triage: updated?.triage ?? triage });
+    } catch (err) {
+      const triage: ReportTriage = {
+        verdict: 'needs_more_info',
+        confidence: 'low',
+        isRealBug: false,
+        headline: 'Triage could not complete',
+        rationale: errorMessage(err),
+        evidence: ['The triage runner failed before returning a verdict.'],
+        nextAction: 'ask_reporter',
+        source: 'heuristic',
+        model: 'triage-runner',
+        latencyMs: 0,
+        createdAt: new Date().toISOString(),
+        error: errorMessage(err),
+      };
+      await store.update(record.report.id, (current) => ({
+        ...current,
+        triage,
+        updatedAt: new Date().toISOString(),
+      }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
+      }
+      return c.json({ reportId: record.report.id, triage }, 500);
+    }
   });
 
   app.get('/reports/:id/autofix', async (c) => {
@@ -602,9 +655,10 @@ export const app = createApp();
 function renderReportsDashboard(records: StoredReportRecord[]): string {
   const rows = records.map((record) => renderReportRow(record)).join('');
   const empty = records.length === 0
-    ? `<tr><td colspan="9" class="empty">No reports captured yet. Submit one from <a href="${CUSTOMER_DEMO_URL}">the demo</a>.</td></tr>`
+    ? `<tr><td colspan="10" class="empty">No reports captured yet. Submit one from <a href="${CUSTOMER_DEMO_URL}">the demo</a>.</td></tr>`
     : '';
   const readyCount = records.filter((record) => record.memory).length;
+  const triagedCount = records.filter((record) => record.triage).length;
   const analyzedCount = records.filter((record) => record.autofix).length;
 
   return `<!doctype html>
@@ -637,9 +691,10 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .button { display: inline-flex; min-height: 40px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 0 12px; background: var(--panel); color: var(--ink); font-size: 14px; font-weight: 650; }
     .button:hover { background: var(--soft); text-decoration: none; }
-    .queue-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
-    .summary-item { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 650; }
-    .summary-item strong { color: var(--ink); }
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 160px); gap: 12px; margin-bottom: 20px; }
+    .kpi-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px 12px; box-shadow: 0 2px 8px oklch(0.45 0.05 248 / .06); }
+    .kpi-card strong { display: block; font-size: 32px; font-weight: 760; line-height: 1; color: var(--ink); letter-spacing: -0.02em; }
+    .kpi-card span { display: block; font-size: 12px; font-weight: 650; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
     .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 30px oklch(0.45 0.05 248 / .08); }
     table { width: 100%; border-collapse: collapse; min-width: 980px; }
     th, td { padding: 12px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
@@ -649,6 +704,9 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
     .muted { color: var(--muted); }
     .pill { display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 650; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); white-space: nowrap; }
     .pill.warn { background: oklch(0.96 0.04 75); color: oklch(0.39 0.1 70); border-color: oklch(0.84 0.09 75); }
+    .pill.neutral { background: oklch(0.94 0.008 248); color: oklch(0.40 0.015 248); border-color: oklch(0.82 0.012 248); }
+    .pill.info { background: oklch(0.94 0.05 258); color: oklch(0.38 0.12 258); border-color: oklch(0.80 0.09 258); }
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
     .links { display: flex; gap: 8px; flex-wrap: wrap; }
     .links a:first-child { font-weight: 750; }
     .empty { text-align: center; padding: 32px; color: var(--muted); }
@@ -672,11 +730,12 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
         <a class="button" href="/reports">JSON</a>
       </nav>
     </header>
-    <section class="queue-summary" aria-label="Queue summary">
-      <span class="summary-item"><strong>${records.length}</strong> captured</span>
-      <span class="summary-item"><strong>${readyCount}</strong> memory ready</span>
-      <span class="summary-item"><strong>${analyzedCount}</strong> analyzed</span>
-    </section>
+    <div class="kpi-row" aria-label="Queue summary">
+      <div class="kpi-card"><strong>${records.length}</strong><span>Captured</span></div>
+      <div class="kpi-card"><strong>${readyCount}</strong><span>Memory ready</span></div>
+      <div class="kpi-card"><strong>${triagedCount}</strong><span>Triaged</span></div>
+      <div class="kpi-card"><strong>${analyzedCount}</strong><span>Analyzed</span></div>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -687,6 +746,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
             <th>Annotation</th>
             <th>Context</th>
             <th>Memory</th>
+            <th>Triage</th>
             <th>Analysis</th>
             <th>GStack</th>
             <th>Links</th>
@@ -726,9 +786,10 @@ function renderReportRow(record: StoredReportRecord): string {
       <div class="muted">${escapeHtml(report.annotation.selector || 'No selector')}</div>
     </td>
     <td>${escapeHtml(context)}</td>
-    <td><span class="${memory.ok ? 'pill' : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
-    <td><span class="pill">${escapeHtml(analysisStatus(record.autofix))}</span></td>
-    <td><span class="pill">${escapeHtml(gstackStatus(record.gstackReview))}</span></td>
+    <td><span class="${memory.ok ? pillClass(memory.label) : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
+    <td><span class="${pillClass(triageStatus(record.triage))}">${escapeHtml(triageStatus(record.triage))}</span></td>
+    <td><span class="${pillClass(analysisStatus(record.autofix))}">${escapeHtml(analysisStatus(record.autofix))}</span></td>
+    <td><span class="${pillClass(gstackStatus(record.gstackReview))}">${escapeHtml(gstackStatus(record.gstackReview))}</span></td>
     <td>
       <div class="links">
         <a href="/reports/${encodeURIComponent(report.id)}/view">Open report</a>
@@ -803,6 +864,7 @@ function renderReportHtml(
   memoryImpact: MemoryImpactSummary,
   agentComparison: AgentComparison,
   memoryReceipts: MemoryReceipt[],
+  triage: ReportTriage | null,
   autofix: unknown,
   gstackReview: unknown
 ): string {
@@ -837,7 +899,7 @@ function renderReportHtml(
     }
     main { max-width: 1240px; margin: 0 auto; padding: 26px 20px 72px; }
     h1 { font-size: 28px; line-height: 1.08; margin: 0 0 8px; letter-spacing: 0; max-width: 760px; }
-    h2 { margin: 0; font-size: 15px; }
+    h2 { margin: 0; font-size: 18px; font-weight: 650; }
     h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
     p { margin: 0; color: var(--muted); line-height: 1.5; }
     a { color: var(--accent); }
@@ -847,8 +909,10 @@ function renderReportHtml(
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
     form { margin: 0; }
     button { min-height: 42px; border-radius: 6px; padding: 0 13px; font: 700 14px system-ui, sans-serif; cursor: pointer; }
-    .safe { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
-    .danger { border: 1px solid oklch(0.78 0.1 28); background: oklch(0.985 0.015 28); color: var(--danger); }
+    .safe { border: 1px solid var(--accent); background: var(--panel); color: var(--accent); }
+    .safe:hover { background: oklch(0.96 0.015 258); }
+    .danger { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
+    .danger:hover { background: oklch(0.46 0.17 258); }
     input {
       width: 100%;
       min-height: 42px;
@@ -1148,6 +1212,10 @@ function renderReportHtml(
     pre { margin: 0 16px 16px; background: var(--code); color: var(--code-text); padding: 14px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.5; max-height: 420px; }
     code { background: var(--soft); border-radius: 4px; padding: 1px 4px; }
     .status-pill { display: inline-flex; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); }
+    .status-pill.neutral { background: oklch(0.94 0.008 248); color: oklch(0.40 0.015 248); border-color: oklch(0.82 0.012 248); }
+    .status-pill.warn { background: oklch(0.96 0.04 75); color: oklch(0.39 0.1 70); border-color: oklch(0.84 0.09 75); }
+    .status-pill.info { background: oklch(0.94 0.05 258); color: oklch(0.38 0.12 258); border-color: oklch(0.80 0.09 258); }
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
     @media (max-width: 900px) {
       header { display: block; }
       .actions { justify-content: flex-start; margin-top: 14px; }
@@ -1182,6 +1250,9 @@ function renderReportHtml(
         </div>
       </div>
       <div class="actions" aria-label="Analysis actions">
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/triage">
+          <button class="safe" type="submit">Triage report</button>
+        </form>
         <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
           <button class="safe" type="submit">Preview Auto-Fix</button>
         </form>
@@ -1209,10 +1280,17 @@ function renderReportHtml(
         </div>
       </section>
     </section>
+    <section class="surface autofix-result" id="triage-result">
+      <div class="surface-head">
+        <h2>Report Triage</h2>
+        <span class="status-pill ${pillClass(triageStatus(triage)).replace('pill','').trim()}">${escapeHtml(triageStatus(triage))}</span>
+      </div>
+      ${renderTriageHtml(reportId, triage)}
+    </section>
     <section class="surface autofix-result" id="autofix-result">
       <div class="surface-head">
         <h2>Auto-Fix Result</h2>
-        <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
+        <span class="status-pill ${pillClass(analysisStatus(autofix)).replace('pill','').trim()}">${escapeHtml(analysisStatus(autofix))}</span>
       </div>
       ${renderAnalysisResultHtml(reportId, autofix)}
     </section>
@@ -1284,6 +1362,8 @@ function renderReportHtml(
           <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
           <h3 class="raw-label">Memory Search</h3>
           <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
+          <h3 class="raw-label">Triage</h3>
+          <pre>${escapeHtml(JSON.stringify(triage, null, 2))}</pre>
         </details>
       </section>
     </div>
@@ -1877,6 +1957,8 @@ function summarizeStoredAutofix(autofix: unknown): {
   targetFiles: string[];
   patchSource?: string;
   patchSummary?: string;
+  artifactType?: string;
+  artifactReason?: string;
   prUrl?: string;
   rootCause?: string;
   verificationOk: boolean | null;
@@ -1889,7 +1971,8 @@ function summarizeStoredAutofix(autofix: unknown): {
   const record = autofix as {
     candidates?: Array<{ path?: unknown }>;
     diagnosis?: { targetFiles?: unknown; rootCause?: unknown };
-    patch?: { source?: unknown; summary?: unknown };
+    patch?: { source?: unknown; summary?: unknown; artifactType?: unknown };
+    artifact?: { type?: unknown; reason?: unknown };
     pr?: { url?: unknown; pr_url?: unknown };
     verification?: { ok?: unknown; commands?: Array<{ name?: unknown }> };
   };
@@ -1906,12 +1989,29 @@ function summarizeStoredAutofix(autofix: unknown): {
   const verificationOk = typeof record.verification?.ok === 'boolean' ? record.verification.ok : null;
   const rootCause = typeof record.diagnosis?.rootCause === 'string' ? record.diagnosis.rootCause : undefined;
   const patchSource = typeof record.patch?.source === 'string' ? record.patch.source : undefined;
-  const patchSummary = typeof record.patch?.summary === 'string' ? record.patch.summary : undefined;
+  const artifactType = typeof record.artifact?.type === 'string'
+    ? record.artifact.type
+    : typeof record.patch?.artifactType === 'string' ? record.patch.artifactType : undefined;
+  const artifactReason = typeof record.artifact?.reason === 'string' ? record.artifact.reason : undefined;
+  const patchSummary = typeof record.patch?.summary === 'string'
+    ? `${artifactType ? `${artifactType}: ` : ''}${record.patch.summary}`
+    : artifactType;
   const prUrl = typeof record.pr?.url === 'string'
     ? record.pr.url
     : typeof record.pr?.pr_url === 'string' ? record.pr.pr_url : undefined;
 
-  return { candidateFiles, targetFiles, patchSource, patchSummary, prUrl, rootCause, verificationOk, verificationCommands };
+  return {
+    candidateFiles,
+    targetFiles,
+    patchSource,
+    patchSummary,
+    artifactType,
+    artifactReason,
+    prUrl,
+    rootCause,
+    verificationOk,
+    verificationCommands,
+  };
 }
 
 function renderAutofixProgressHtml(autofix: unknown): string {
@@ -1997,6 +2097,7 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   const patch = summary.patchSummary
     ? `${summary.patchSummary}${summary.patchSource ? ` (${summary.patchSource})` : ''}`
     : summary.patchSource ?? 'No patch summary recorded';
+  const artifactWhy = summary.artifactReason ?? summary.rootCause ?? candidateFiles;
   const prHtml = summary.prUrl
     ? `<a href="${escapeHtml(summary.prUrl)}">Open GitHub PR</a>`
     : 'No PR opened';
@@ -2013,7 +2114,7 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
       <div class="result-item"><span>Patch</span><strong>${escapeHtml(patch)}</strong></div>
       <div class="result-item"><span>Verification</span><strong>${escapeHtml(verification)} · ${escapeHtml(commands)}</strong></div>
       <div class="result-item"><span>Pull request</span><strong>${prHtml}</strong></div>
-      <div class="result-item"><span>Why this file</span><strong>${escapeHtml(summary.rootCause ?? candidateFiles)}</strong></div>
+      <div class="result-item"><span>Why this file</span><strong>${escapeHtml(artifactWhy)}</strong></div>
     </div>
   </div>
   <div class="analysis-summary">
@@ -2025,6 +2126,47 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
       <div><dt>Verification</dt><dd>${escapeHtml(verification)} · ${escapeHtml(commands)}</dd></div>
       <div><dt>PR</dt><dd>${prHtml}</dd></div>
     </dl>
+  </div>
+  ${rawDetails}`;
+}
+
+function renderTriageHtml(reportId: string, triage: ReportTriage | null): string {
+  const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/triage">
+    <summary>Debug triage JSON</summary>
+    <pre data-analysis-raw>Open to load triage JSON.</pre>
+  </details>`;
+
+  if (!triage) {
+    return `<div class="analysis-body">
+      <p>No triage run yet. Triage uses captured browser evidence to decide whether this looks like a real bug before starting the heavier Auto-Fix path.</p>
+    </div>
+    ${rawDetails}`;
+  }
+
+  const evidence = triage.evidence.length
+    ? triage.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join('')
+    : '<li>No evidence recorded.</li>';
+  const error = triage.error
+    ? `<div class="result-item"><span>Fallback</span><strong>${escapeHtml(triage.error)}</strong></div>`
+    : '';
+
+  return `<div class="result-card">
+    <div class="result-headline">
+      <strong>${escapeHtml(triage.headline)}</strong>
+      <p>${escapeHtml(triage.rationale)}</p>
+    </div>
+    <div class="result-grid">
+      <div class="result-item"><span>Verdict</span><strong>${escapeHtml(triage.verdict)}</strong></div>
+      <div class="result-item"><span>Real bug</span><strong>${triage.isRealBug ? 'yes' : 'no'}</strong></div>
+      <div class="result-item"><span>Confidence</span><strong>${escapeHtml(triage.confidence)}</strong></div>
+      <div class="result-item"><span>Next action</span><strong>${escapeHtml(triage.nextAction)}</strong></div>
+      <div class="result-item"><span>Source</span><strong>${escapeHtml(triage.source)} · ${escapeHtml(triage.model)} · ${triage.latencyMs}ms</strong></div>
+      ${error}
+    </div>
+  </div>
+  <div class="analysis-summary">
+    <h3>Evidence used</h3>
+    <ol>${evidence}</ol>
   </div>
   ${rawDetails}`;
 }
@@ -2222,6 +2364,12 @@ function analysisStatus(autofix: unknown): string {
   return typeof status === 'string' ? status : 'recorded';
 }
 
+function triageStatus(triage: unknown): string {
+  if (!triage || typeof triage !== 'object') return 'not run';
+  const verdict = (triage as { verdict?: unknown }).verdict;
+  return typeof verdict === 'string' ? verdict : 'recorded';
+}
+
 function initialAutofixStages(dryRun: boolean): AutofixStageEvent[] {
   const now = new Date().toISOString();
   return AUTOFIX_STAGE_DEFS.map((stage) => ({
@@ -2260,7 +2408,7 @@ function completeAutofixStages(stages: AutofixStageEvent[], status: string): Aut
   const existing = stages.length ? stages : initialAutofixStages(false);
   return existing.map((stage) => {
     if (stage.status !== 'pending' && stage.status !== 'running') return stage;
-    if (stage.key === 'pr' && (status === 'verified_no_pr' || status === 'diagnosis_only')) {
+    if (stage.key === 'pr' && (status === 'verified_no_pr' || status === 'diagnosis_only' || status === 'external_blocker')) {
       return { ...stage, status: 'skipped', detail: 'No PR was opened for this run.', at: now };
     }
     if (stage.status === 'running') return { ...stage, status: 'completed', at: now };
@@ -2460,6 +2608,7 @@ interface StoredAutofixSummary extends Record<string, unknown> {
   candidates: unknown[];
   diagnosis: unknown;
   patch: unknown;
+  artifact: unknown;
   verification: unknown;
   pr: unknown;
   prError?: string;
@@ -2473,6 +2622,7 @@ interface AutofixRunnerResult {
     candidates?: Array<{ path: string; score: number; reasons: string[] }>;
     diagnosis?: unknown;
     patch?: unknown;
+    artifact?: unknown;
     verification?: unknown;
   };
   pr?: unknown;
@@ -2487,12 +2637,51 @@ function summarizeAutofixResult(result: unknown): StoredAutofixSummary {
     candidates: typed.pipeline?.candidates?.slice(0, 5) ?? [],
     diagnosis: typed.pipeline?.diagnosis ?? null,
     patch: typed.pipeline?.patch ?? null,
+    artifact: typed.pipeline?.artifact ?? null,
     verification: typed.pipeline?.verification ?? null,
     pr: typed.pr ?? null,
     prError: typed.prError,
     meta: typed.meta,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function pillClass(status: string): string {
+  const s = status.toLowerCase().replace(/[\s:]+/g, '_');
+  if (['pr_opened', 'passed', 'verified_no_pr', 'written', 'real_bug'].some((v) => s.includes(v))) return 'pill';
+  if (['not_run', 'pr_skipped', 'recorded', 'no_pr'].some((v) => s.includes(v))) return 'pill neutral';
+  if (['diagnosis_only', 'fallback', 'blocked', 'failed', 'external_blocker', 'not_a_bug'].some((v) => s.includes(v))) return 'pill warn';
+  if (['queued', 'running', 'likely_bug', 'needs_more_info'].some((v) => s.includes(v))) return 'pill info';
+  return 'pill neutral';
+}
+
+function render404Html(reportId: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Report not found</title>
+  <style>
+    :root { --ink: oklch(0.21 0.018 248); --muted: oklch(0.46 0.022 248); --canvas: oklch(0.982 0.006 248); --accent: oklch(0.51 0.17 258); }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--canvas); color: var(--ink); display: grid; place-items: center; min-height: 100vh; }
+    main { text-align: center; padding: 40px 20px; }
+    h1 { font-size: 24px; margin: 0 0 10px; }
+    p { color: var(--muted); margin: 0 0 24px; line-height: 1.5; }
+    a { color: var(--accent); font-weight: 650; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: oklch(0.94 0.008 248); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Report not found</h1>
+    <p>No report exists for <code>${escapeHtml(reportId)}</code>.</p>
+    <a href="/reports/dashboard">Back to review queue</a>
+  </main>
+</body>
+</html>`;
 }
 
 function escapeHtml(value: string): string {
