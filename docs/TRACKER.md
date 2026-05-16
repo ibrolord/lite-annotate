@@ -70,6 +70,8 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `gstack-runner-stdio-2026-05-16` | GStack Runner / Safety | Ignored runner child stdin explicitly | Done | Uses Node `stdio` option so spawned Claude/Git processes cannot hang on inherited stdin |
 | `gstack-trigger-token-2026-05-16` | GStack Runner / Safety | Made missing trigger token fail closed | Done | `npm test` 39/39; unauthenticated GStack trigger must return 503 when `GSTACK_TRIGGER_TOKEN` is absent |
 | `report-repo-callback-retry-2026-05-16` | Person B / GStack Runner | Preferred report repo and retried runner callbacks | Done | Autofix uses report-scoped repo over hosted env defaults; runner persists failed results and retries Lite Annotate callbacks before marking callback failure |
+| `gstack-mode-stack-ranking-2026-05-16` | GStack Runner / Ranking | Preserved runner mode and stack-frame evidence | Done | `npm run typecheck`; `npm test` 45/45; callbacks keep review mode, code ranking reads console stack fields and prioritizes first stack frame |
+| `hosted-gstack-review-2026-05-16` | GStack Runner / Deploy | Ran authorized hosted GStack runner review | Done | Railway deployment `7a1e00bc-404a-4e94-8974-a03e476e7de4`; unauthenticated trigger returns 401; authorized job `gstack_84508758-0dbd-493d-aaf3-3867b6e31b69` returned `passed` and replaced the stale queued record |
 
 ## Gates
 

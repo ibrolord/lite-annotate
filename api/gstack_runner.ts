@@ -30,6 +30,7 @@ export interface GStackReviewResult extends Record<string, unknown> {
   jobId: string;
   reportId: string;
   status: StoredGStackReviewRecord['status'];
+  mode?: GStackJobMode;
   commandsRun: string[];
   summary: string;
   diagnosis?: string;

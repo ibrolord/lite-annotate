@@ -142,3 +142,77 @@ test('rankCandidateFiles trusts stack-frame source paths over noisy network rout
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('rankCandidateFiles reads stack-frame source paths from console stack fields', () => {
+  const root = makeFixtureRepo();
+  try {
+    mkdirSync(join(root, 'api', 'users'), { recursive: true });
+    writeFileSync(join(root, 'api', 'users', '999.js'), `export default function handler() {}\n`);
+
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'User profile crashes after API failure',
+      description: 'A noisy API route is present, but the console stack points at the UI code.',
+      url: 'https://demo.example.com/account',
+      route: '/account',
+      consoleLogs: [
+        {
+          level: 'error',
+          message: "Cannot read properties of undefined (reading 'name')",
+          stack: 'TypeError: Cannot read properties of undefined\n    at formatUserGreeting (https://demo.example.com/src/users.js:16:36)',
+        },
+      ],
+      network: [
+        {
+          method: 'GET',
+          url: '/api/users/999',
+          status: 404,
+        },
+      ],
+    });
+
+    assert.equal(ranked[0]?.path, 'src/users.js');
+    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('stack trace references src/users.js')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rankCandidateFiles prioritizes the first console stack frame', () => {
+  const root = makeFixtureRepo();
+  try {
+    mkdirSync(join(root, 'api', 'users'), { recursive: true });
+    writeFileSync(join(root, 'api', 'users', '999.js'), `export default function handler() {}\n`);
+
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'User profile crashes after dashboard render',
+      description: 'The route and later stack frame mention users, but the top frame is the component that threw.',
+      url: 'https://demo.example.com/users',
+      route: '/users',
+      console: [
+        {
+          level: 'error',
+          message: "Cannot read properties of undefined (reading 'name')",
+          stack: [
+            "TypeError: Cannot read properties of undefined (reading 'name')",
+            '    at Dashboard (src/components/Dashboard.tsx:2:15)',
+            '    at formatUserGreeting (src/users.js:16:36)',
+          ].join('\n'),
+        },
+      ],
+      network: [
+        {
+          method: 'GET',
+          url: '/api/users/999',
+          status: 404,
+        },
+      ],
+    });
+
+    assert.equal(ranked[0]?.path, 'src/components/Dashboard.tsx');
+    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('stack trace references src/components/Dashboard.tsx')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

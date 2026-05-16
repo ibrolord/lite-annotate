@@ -252,7 +252,7 @@ export function createApp(deps: {
         jobId: result.jobId,
         reportId: result.reportId,
         status: result.status,
-        mode: current.gstackReview?.mode ?? 'review_fix',
+        mode: result.mode ?? current.gstackReview?.mode ?? 'review_fix',
         runnerUrl: current.gstackReview?.runnerUrl,
         createdAt: current.gstackReview?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),

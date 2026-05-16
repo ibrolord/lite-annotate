@@ -74,11 +74,13 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     const created = await create.json();
     assert.equal(created.gstackReview.jobId, 'gstack_job_123');
     assert.equal(created.gstackReview.status, 'queued');
+    assert.equal(created.gstackReview.mode, 'review_fix');
     assert.equal(runnerRequests.length, 1);
     assert.equal(runnerRequests[0].url, 'https://gstack-runner.example.com/jobs');
     assert.equal(runnerRequests[0].auth, 'Bearer runner-secret');
     assert.equal((runnerRequests[0].body as { callbackUrl: string }).callbackUrl, 'https://lite-annotate.example.com/internal/gstack-callback');
     assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, true);
+    assert.equal((runnerRequests[0].body as { mode: string }).mode, 'review_fix');
 
     const callback = await app.request('/internal/gstack-callback', {
       method: 'POST',
@@ -90,6 +92,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
         jobId: 'gstack_job_123',
         reportId: posted.reportId,
         status: 'passed',
+        mode: 'qa',
         commandsRun: ['/investigate', '/review'],
         summary: 'GStack review passed',
         diagnosis: 'Missing user guard',
@@ -103,6 +106,8 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     const get = await app.request(`/reports/${posted.reportId}/gstack-review`);
     const getBody = await get.json();
     assert.equal(getBody.gstackReview.status, 'passed');
+    assert.equal(getBody.gstackReview.mode, 'qa');
+    assert.equal(getBody.gstackReview.result.mode, 'qa');
     assert.equal(getBody.gstackReview.result.summary, 'GStack review passed');
     assert.equal('logs' in getBody.gstackReview.result, false);
 
