@@ -232,6 +232,8 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
   const empty = records.length === 0
     ? '<tr><td colspan="8" class="empty">No reports captured yet. Submit one from <a href="/demo">the demo</a>.</td></tr>'
     : '';
+  const readyCount = records.filter((record) => record.memory).length;
+  const analyzedCount = records.filter((record) => record.autofix).length;
 
   return `<!doctype html>
 <html lang="en">
@@ -240,27 +242,46 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lite Annotate Reports</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; color: #111827; background: #f8fafc; }
-    main { max-width: 1240px; margin: 0 auto; padding: 32px 20px 64px; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
-    h1 { font-size: 24px; margin: 0 0 6px; }
-    p { margin: 0; color: #4b5563; }
-    a { color: #2563eb; text-decoration: none; }
+    :root {
+      color-scheme: light;
+      --ink: oklch(0.21 0.018 248);
+      --muted: oklch(0.46 0.022 248);
+      --canvas: oklch(0.985 0.006 248);
+      --panel: oklch(0.998 0.004 248);
+      --line: oklch(0.89 0.012 248);
+      --soft: oklch(0.955 0.012 248);
+      --accent: oklch(0.51 0.17 258);
+      --success: oklch(0.48 0.13 152);
+      --warn: oklch(0.64 0.13 70);
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; color: var(--ink); background: var(--canvas); }
+    main { max-width: 1240px; margin: 0 auto; padding: 28px 20px 64px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding-bottom: 20px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+    h1 { font-size: 26px; line-height: 1.1; margin: 0 0 7px; letter-spacing: 0; }
+    p { margin: 0; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-    .button { display: inline-flex; align-items: center; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; background: #fff; color: #111827; font-size: 14px; }
-    .table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+    .button { display: inline-flex; min-height: 40px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 0 12px; background: var(--panel); color: var(--ink); font-size: 14px; font-weight: 650; }
+    .button:hover { background: var(--soft); text-decoration: none; }
+    .queue-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
+    .summary-item { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 650; }
+    .summary-item strong { color: var(--ink); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 30px oklch(0.45 0.05 248 / .08); }
     table { width: 100%; border-collapse: collapse; min-width: 980px; }
-    th, td { padding: 11px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; font-size: 13px; }
-    th { color: #6b7280; font-weight: 600; background: #f9fafb; }
+    th, td { padding: 12px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
+    th { color: var(--muted); font-weight: 700; background: var(--soft); }
     tr:last-child td { border-bottom: 0; }
-    .title { font-weight: 600; color: #111827; }
-    .muted { color: #6b7280; }
-    .pill { display: inline-flex; border-radius: 999px; padding: 2px 8px; font-size: 12px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; white-space: nowrap; }
-    .pill.warn { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .title { font-weight: 700; color: var(--ink); }
+    .muted { color: var(--muted); }
+    .pill { display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 650; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); white-space: nowrap; }
+    .pill.warn { background: oklch(0.96 0.04 75); color: oklch(0.39 0.1 70); border-color: oklch(0.84 0.09 75); }
     .links { display: flex; gap: 8px; flex-wrap: wrap; }
-    .empty { text-align: center; padding: 32px; color: #6b7280; }
-    code { background: #f3f4f6; border-radius: 4px; padding: 1px 4px; }
+    .links a:first-child { font-weight: 750; }
+    .empty { text-align: center; padding: 32px; color: var(--muted); }
+    code { background: var(--soft); border-radius: 4px; padding: 1px 4px; overflow-wrap: anywhere; }
+    a:focus-visible, .button:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
     @media (max-width: 760px) {
       header { display: block; }
       .actions { margin-top: 14px; }
@@ -271,14 +292,19 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
   <main>
     <header>
       <div>
-        <h1>Reports</h1>
-        <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for review and analysis handoff.</p>
+        <h1>Review queue</h1>
+        <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for memory-aware engineering review.</p>
       </div>
       <nav class="actions">
         <a class="button" href="/demo">Demo</a>
         <a class="button" href="/reports">JSON</a>
       </nav>
     </header>
+    <section class="queue-summary" aria-label="Queue summary">
+      <span class="summary-item"><strong>${records.length}</strong> captured</span>
+      <span class="summary-item"><strong>${readyCount}</strong> memory ready</span>
+      <span class="summary-item"><strong>${analyzedCount}</strong> analyzed</span>
+    </section>
     <div class="table-wrap">
       <table>
         <thead>
@@ -331,7 +357,7 @@ function renderReportRow(record: StoredReportRecord): string {
     <td><span class="pill">${escapeHtml(analysisStatus(record.autofix))}</span></td>
     <td>
       <div class="links">
-        <a href="/reports/${encodeURIComponent(report.id)}/view">view</a>
+        <a href="/reports/${encodeURIComponent(report.id)}/view">Open report</a>
         <a href="/reports/${encodeURIComponent(report.id)}">json</a>
         <a href="/reports/${encodeURIComponent(report.id)}/memory">memory</a>
         <a href="/reports/${encodeURIComponent(report.id)}/handoff">handoff</a>
@@ -370,7 +396,7 @@ function shortUrl(value: string): string {
 
 function renderReportHtml(
   reportId: string,
-  report: unknown,
+  report: LiteReport,
   raw: unknown,
   memory: unknown,
   similar: unknown,
@@ -386,38 +412,135 @@ function renderReportHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lite Annotate Report ${escapeHtml(reportId)}</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 32px auto; padding: 0 20px; color: #111827; }
-    h1 { font-size: 24px; }
-    h2 { margin-top: 28px; font-size: 16px; }
-    pre { background: #0f172a; color: #e5e7eb; padding: 16px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.5; }
-    a { color: #2563eb; }
+    :root {
+      color-scheme: light;
+      --ink: oklch(0.21 0.018 248);
+      --muted: oklch(0.46 0.022 248);
+      --canvas: oklch(0.985 0.006 248);
+      --panel: oklch(0.998 0.004 248);
+      --line: oklch(0.89 0.012 248);
+      --soft: oklch(0.955 0.012 248);
+      --accent: oklch(0.51 0.17 258);
+      --danger: oklch(0.52 0.19 28);
+      --warn: oklch(0.64 0.13 70);
+      --success: oklch(0.48 0.13 152);
+      --code: oklch(0.19 0.025 248);
+      --code-text: oklch(0.93 0.012 248);
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; color: var(--ink); background: var(--canvas); }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 72px; }
+    h1 { font-size: 26px; line-height: 1.12; margin: 0 0 8px; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    p { margin: 0; color: var(--muted); line-height: 1.5; }
+    a { color: var(--accent); }
+    a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+    .subnav { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+    form { margin: 0; }
+    button { min-height: 42px; border-radius: 6px; padding: 0 13px; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+    .safe { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
+    .danger { border: 1px solid oklch(0.78 0.1 28); background: oklch(0.985 0.015 28); color: var(--danger); }
+    .layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(360px, 1.1fr); gap: 18px; align-items: start; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 10px 30px oklch(0.45 0.05 248 / .08); }
+    .stack { display: grid; gap: 14px; }
+    .brief-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .brief-item { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); min-height: 82px; }
+    .brief-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+    .brief-item strong { display: block; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+    .action-note { display: grid; gap: 8px; margin-top: 12px; }
+    .callout { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--soft); }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .memory-impact ul, .receipt-list, .agent-list { padding-left: 18px; margin: 10px 0 0; color: var(--ink); }
+    .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .comparison > div { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--soft); }
+    details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
+    summary { cursor: pointer; padding: 14px 16px; font-weight: 700; }
+    .raw-label { margin: 0 16px 8px; }
+    pre { margin: 0 16px 16px; background: var(--code); color: var(--code-text); padding: 14px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.5; max-height: 420px; }
+    code { background: var(--soft); border-radius: 4px; padding: 1px 4px; }
+    .status-pill { display: inline-flex; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); }
+    @media (max-width: 900px) {
+      header { display: block; }
+      .actions { justify-content: flex-start; margin-top: 14px; }
+      .layout { grid-template-columns: 1fr; }
+      .brief-grid, .comparison { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <h1>Report ${escapeHtml(reportId)}</h1>
-  <p><a href="/reports/${encodeURIComponent(reportId)}">Normalized JSON</a> · <a href="/reports/${encodeURIComponent(reportId)}/handoff">Analysis handoff</a></p>
-  <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
-    <button type="submit">Run analysis</button>
-  </form>
-  <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
-    <button type="submit">Dry run analysis</button>
-  </form>
-  <h2>Normalized Report</h2>
-  <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
-  <h2>Raw Saved Payload</h2>
-  <pre>${escapeHtml(JSON.stringify(raw, null, 2))}</pre>
-  <h2>Memory Entry</h2>
-  <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
-  <h2>Memory Search</h2>
-  <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
-  <h2>Memory Impact</h2>
-  ${renderMemoryImpactHtml(memoryImpact)}
-  <h2>Cold Agent vs Memory Agent</h2>
-  ${renderAgentComparisonHtml(agentComparison)}
-  <h2>Memory Receipts</h2>
-  ${renderMemoryReceiptsHtml(memoryReceipts)}
-  <h2>Analysis Result</h2>
-  <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
+  <main>
+    <header>
+      <div>
+        <h1>${escapeHtml(report.title)}</h1>
+        <div class="subnav">
+          <a href="/reports/dashboard">Review queue</a>
+          <span>Report <code>${escapeHtml(reportId)}</code></span>
+          <a href="/reports/${encodeURIComponent(reportId)}/handoff">Analysis handoff</a>
+        </div>
+      </div>
+      <div class="actions" aria-label="Analysis actions">
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
+          <button class="safe" type="submit">Dry run analysis</button>
+        </form>
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
+          <button class="danger" type="submit">Run analysis</button>
+        </form>
+      </div>
+    </header>
+    <div class="layout">
+      <aside class="stack">
+        <section class="panel">
+          <h2>Evidence brief</h2>
+          <div class="brief-grid">
+            <div class="brief-item"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
+            <div class="brief-item"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
+            <div class="brief-item"><span>Browser error</span><strong>${escapeHtml(report.console[0]?.message || 'No console error captured')}</strong></div>
+            <div class="brief-item"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Action safety</h2>
+          <div class="action-note">
+            <div class="callout"><strong>Safe validation</strong><p>Dry run analysis verifies diagnosis and patch gates without opening a public PR.</p></div>
+            <div class="callout"><strong>PR-opening action</strong><p>Run analysis can open a GitHub PR when credentials and verification gates allow it.</p></div>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Analysis Result</h2>
+          <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
+          <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
+        </section>
+      </aside>
+      <section class="stack">
+        <section class="panel">
+          <h2>Memory Impact</h2>
+          ${renderMemoryImpactHtml(memoryImpact)}
+        </section>
+        <section class="panel">
+          <h2>Cold Agent vs Memory Agent</h2>
+          ${renderAgentComparisonHtml(agentComparison)}
+        </section>
+        <section class="panel">
+          <h2>Memory Receipts</h2>
+          ${renderMemoryReceiptsHtml(memoryReceipts)}
+        </section>
+        <details open>
+          <summary>Raw payloads</summary>
+          <h3 class="raw-label">Normalized Report</h3>
+          <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
+          <h3 class="raw-label">Raw Saved Payload</h3>
+          <pre>${escapeHtml(JSON.stringify(raw, null, 2))}</pre>
+          <h3 class="raw-label">Memory Entry</h3>
+          <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
+          <h3 class="raw-label">Memory Search</h3>
+          <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
+        </details>
+      </section>
+    </div>
+  </main>
 </body>
 </html>`;
 }
@@ -645,7 +768,7 @@ function summarizeStoredAutofix(autofix: unknown): {
 function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
   const top = summary.topMemory
     ? `<p><strong>${escapeHtml(summary.headline)}</strong>: ${escapeHtml(summary.topMemory.title)} <span>(${escapeHtml(summary.topMemory.provider)}, score ${summary.topMemory.score})</span></p>
-       <p>${escapeHtml(summary.topMemory.excerpt)}</p>`
+       <p>${escapeHtml(truncateText(summary.topMemory.excerpt, 220))}</p>`
     : `<p><strong>${escapeHtml(summary.headline)}</strong></p>`;
   const items = summary.impact.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
 
@@ -657,16 +780,16 @@ function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
 }
 
 function renderAgentComparisonHtml(comparison: AgentComparison): string {
-  return `<section>
+  return `<section class="comparison">
     <div>
       <h3>${escapeHtml(comparison.cold.label)}</h3>
-      <ol>${comparison.cold.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
+      <ol class="agent-list">${comparison.cold.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
       <p>${escapeHtml(comparison.cold.limitation)}</p>
       <p>${escapeHtml(comparison.cold.outcome)}</p>
     </div>
     <div>
       <h3>${escapeHtml(comparison.memory.label)}</h3>
-      <ol>${comparison.memory.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
+      <ol class="agent-list">${comparison.memory.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
       <p>${escapeHtml(comparison.memory.advantage)}</p>
       <p>${escapeHtml(comparison.memory.outcome)}</p>
     </div>
@@ -675,8 +798,8 @@ function renderAgentComparisonHtml(comparison: AgentComparison): string {
 
 function renderMemoryReceiptsHtml(receipts: MemoryReceipt[]): string {
   return `<section>
-    <ul>${receipts.map((receipt) => (
-      `<li><strong>${escapeHtml(receipt.label)}</strong>: ${escapeHtml(receipt.detail)}</li>`
+    <ul class="receipt-list">${receipts.map((receipt) => (
+      `<li><strong>${escapeHtml(receipt.label)}</strong>: ${escapeHtml(truncateText(receipt.detail, 220))}</li>`
     )).join('')}</ul>
   </section>`;
 }
@@ -742,6 +865,11 @@ function errorMessage(err: unknown): string {
 
 function isTruthyFlag(value: string | undefined): boolean {
   return value === '1' || value === 'true' || value === 'yes';
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 const directRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

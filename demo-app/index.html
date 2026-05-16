@@ -5,80 +5,160 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lite Annotate Demo</title>
   <style>
-    :root { color-scheme: light; }
+    :root {
+      color-scheme: light;
+      --ink: oklch(0.19 0.017 248);
+      --muted: oklch(0.45 0.018 248);
+      --canvas: oklch(0.982 0.006 248);
+      --panel: oklch(0.998 0.003 248);
+      --line: oklch(0.88 0.012 248);
+      --soft: oklch(0.952 0.01 248);
+      --accent: oklch(0.49 0.16 255);
+      --accent-ink: oklch(0.99 0.004 248);
+      --danger: oklch(0.52 0.19 28);
+      --success: oklch(0.48 0.13 152);
+      --code: oklch(0.18 0.023 248);
+      --code-text: oklch(0.93 0.012 248);
+    }
+    * { box-sizing: border-box; }
     body {
-      font-family: system-ui, sans-serif;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      color: #111827;
-      background: #f8fafc;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, oklch(0.995 0.004 248), var(--canvas) 340px);
     }
     main {
-      max-width: 1120px;
+      max-width: 1220px;
       margin: 0 auto;
-      padding: 40px 24px 88px;
+      padding: 26px 24px 96px;
     }
-    h1 { font-size: 28px; margin: 0 0 8px; }
-    h2 { font-size: 16px; margin: 0 0 12px; }
-    p { color: #4b5563; }
+    h1 { font-size: 30px; line-height: 1.06; margin: 0 0 8px; letter-spacing: 0; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    h3 { font-size: 12px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    p { color: var(--muted); margin: 0; max-width: 70ch; }
     .topbar {
       display: flex;
       justify-content: space-between;
       gap: 16px;
       align-items: flex-start;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--line);
     }
     .topbar a {
       display: inline-flex;
       align-items: center;
-      padding: 8px 10px;
-      border: 1px solid #d1d5db;
+      min-height: 38px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
       border-radius: 6px;
-      background: #fff;
-      color: #111827;
+      background: var(--panel);
+      color: var(--ink);
       font-size: 14px;
       text-decoration: none;
+      font-weight: 650;
     }
-    .topbar a:hover { background: #f3f4f6; }
+    .topbar a:hover { background: var(--soft); }
+    .eyebrow {
+      display: inline-flex;
+      margin-bottom: 9px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
     button {
-      padding: 10px 18px;
-      background: #111827;
-      color: #fff;
+      min-height: 42px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: var(--accent-ink);
       border: none;
       border-radius: 6px;
       cursor: pointer;
       font-size: 15px;
+      font-weight: 700;
+      transition: background-color 180ms ease-out, transform 180ms ease-out;
     }
-    button:hover { background: #374151; }
+    button:hover { background: oklch(0.46 0.18 258); }
+    button:focus-visible, a:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
     .grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-      gap: 24px;
+      grid-template-columns: minmax(310px, .74fr) minmax(0, 1.26fr);
+      gap: 22px;
       align-items: start;
-      margin-top: 28px;
+      margin-top: 24px;
     }
-    .panel {
-      background: #fff;
-      border: 1px solid #e5e7eb;
+    .surface {
+      background: var(--panel);
+      border: 1px solid var(--line);
       border-radius: 8px;
+      box-shadow: 0 16px 34px oklch(0.42 0.04 248 / .07);
+    }
+    .hero-panel {
+      position: sticky;
+      top: 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .bug-card {
+      display: grid;
+      gap: 14px;
       padding: 18px;
+      border: 1px solid oklch(0.84 0.05 28);
+      border-radius: 8px;
+      background: oklch(0.982 0.015 35);
+    }
+    .bug-card h2 { color: var(--danger); }
+    .signal-rail {
+      padding: 6px 0;
+      border-block: 1px solid var(--line);
+    }
+    .signal-row {
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .signal-row:last-child { border-bottom: 0; }
+    .signal-row strong { color: var(--ink); font-size: 13px; }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--success);
+      justify-self: center;
+    }
+    .signal-row code {
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--soft);
+      color: var(--muted);
+      font: 650 11px ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     #output {
-      min-height: 28px;
-      margin-top: 18px;
-      font-size: 17px;
-      font-weight: 600;
+      min-height: 26px;
+      margin-top: 4px;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--danger);
     }
     .status {
       margin-top: 12px;
-      color: #6b7280;
+      color: var(--muted);
       font-size: 14px;
     }
     pre {
-      max-height: 360px;
+      max-height: 248px;
       overflow: auto;
-      background: #0f172a;
-      color: #e5e7eb;
+      background: var(--code);
+      color: var(--code-text);
       padding: 14px;
-      border-radius: 8px;
+      border-radius: 6px;
       font-size: 12px;
       line-height: 1.45;
       white-space: pre-wrap;
@@ -86,19 +166,91 @@
     }
     img {
       max-width: 100%;
-      border: 1px solid #e5e7eb;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: var(--panel);
     }
     .stack {
       display: grid;
-      gap: 18px;
+      gap: 14px;
+    }
+    .handoff-console {
+      padding: 16px 18px 18px;
+    }
+    .flow {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 18px;
+      border-block: 1px solid var(--line);
+    }
+    .flow li {
+      display: grid;
+      grid-template-columns: 34px minmax(130px, .34fr) 1fr;
+      gap: 12px;
+      align-items: baseline;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .flow li:last-child { border-bottom: 0; }
+    .flow b {
+      display: inline-flex;
+      width: 24px;
+      height: 24px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent);
+      font-size: 12px;
+    }
+    .flow strong { color: var(--ink); }
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 16px 34px oklch(0.42 0.04 248 / .07);
+    }
+    .data-panel {
+      min-width: 0;
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .data-panel:nth-child(2n) { border-right: 0; }
+    .data-panel h2 { margin-bottom: 8px; }
+    .data-panel pre { margin: 0; }
+    .data-panel.wide { grid-column: 1 / -1; border-right: 0; }
+    details.surface { padding: 0; overflow: hidden; }
+    details.surface summary {
+      cursor: pointer;
+      padding: 16px 18px;
+      font-weight: 700;
+    }
+    details.surface pre, details.surface > div:not(summary) { margin: 0 18px 18px; }
+    .empty-note { color: var(--muted); font-size: 13px; }
+    .section-head { margin: 2px 0 14px; }
+    .section-head p { margin-top: 4px; }
+    @media (prefers-reduced-motion: reduce) {
+      button { transition: none; }
     }
     @media (max-width: 860px) {
       .grid { grid-template-columns: 1fr; }
+      .hero-panel { position: static; }
       main { padding-inline: 16px; }
       .topbar { display: block; }
       .topbar a { margin-top: 12px; }
+      .data-grid { grid-template-columns: 1fr; }
+      .data-panel { border-right: 0; }
+    }
+    @media (max-width: 560px) {
+      .flow li { grid-template-columns: 28px 1fr; }
+      .flow li span { grid-column: 2; }
     }
   </style>
 </head>
@@ -106,54 +258,78 @@
   <main>
     <header class="topbar">
       <div>
+        <span class="eyebrow">Evidence pipeline</span>
         <h1>Lite Annotate Demo</h1>
-        <p>Trigger the pinned profile bug, then submit it with the widget in the lower-right corner.</p>
+        <p>Trigger the profile bug, submit it with the widget, then watch the report become memory, handoff context, and analysis input.</p>
       </div>
       <a href="/reports/dashboard">Reports dashboard</a>
     </header>
 
     <div class="grid">
-      <section class="panel">
-        <h2>Demo App</h2>
-        <p>Welcome back. View your profile below.</p>
-        <button id="load-profile" onclick="loadUser()">Load User Profile</button>
-        <div id="output"></div>
-        <div class="status" id="bug-status">No report submitted yet.</div>
+      <section class="hero-panel">
+        <div class="bug-card">
+          <h2>Capture lab</h2>
+          <p>Click the profile action to create the pinned failure, then report it from the floating widget.</p>
+          <button id="load-profile" onclick="loadUser()">Load User Profile</button>
+          <div id="output"></div>
+          <div class="status" id="bug-status">No report submitted yet.</div>
+        </div>
+        <div class="surface handoff-console">
+          <h2>What the judge should see</h2>
+          <div class="signal-rail">
+            <div class="signal-row"><span class="dot"></span><strong>Console error</strong><code>captured</code></div>
+            <div class="signal-row"><span class="dot"></span><strong>Network 404</strong><code>captured</code></div>
+            <div class="signal-row"><span class="dot"></span><strong>Page annotation</strong><code>pinned</code></div>
+            <div class="signal-row"><span class="dot"></span><strong>GBrain memory</strong><code>written</code></div>
+          </div>
+        </div>
       </section>
 
       <section class="stack">
-        <div class="panel">
-          <h2>Report ID Ready For Worker</h2>
-          <pre id="report-id">Waiting for widget submission...</pre>
+        <div class="section-head">
+          <h2>Analysis handoff</h2>
+          <p>These are the signals the backend stores and passes into memory-aware analysis.</p>
         </div>
-        <div class="panel">
-          <h2>Submitted Payload</h2>
+        <ol class="flow" aria-label="Evidence pipeline">
+          <li><b>1</b><strong>Capture</strong><span>Widget collects annotation, route, console, network, session, and screenshot.</span></li>
+          <li><b>2</b><strong>Normalize</strong><span>API writes a stable report contract that engineers can inspect.</span></li>
+          <li><b>3</b><strong>Remember</strong><span>GBrain stores the bug and retrieves similar prior context.</span></li>
+          <li><b>4</b><strong>Analyze</strong><span>Dry-run analysis verifies the fix path before any PR action.</span></li>
+        </ol>
+        <div class="data-grid">
+          <section class="data-panel">
+            <h2>Report ready for analysis</h2>
+            <pre id="report-id">Waiting for widget submission...</pre>
+          </section>
+          <section class="data-panel">
+            <h2>Page annotation</h2>
+            <pre id="page-annotation">Waiting for annotation...</pre>
+          </section>
+          <section class="data-panel wide">
+            <h2>Normalized report</h2>
+            <pre id="saved-report">Waiting for API response...</pre>
+          </section>
+          <section class="data-panel">
+            <h2>Browser receipts</h2>
+            <pre id="breadcrumbs">Waiting for saved report...</pre>
+          </section>
+          <section class="data-panel">
+            <h2>Screenshot</h2>
+            <div class="empty-note" id="screenshot">Waiting for screenshot...</div>
+          </section>
+          <section class="data-panel">
+            <h2>Memory entry and similar search</h2>
+            <pre id="memory-entry">Waiting for memory write...</pre>
+          </section>
+          <section class="data-panel">
+            <h2>Analysis handoff payload</h2>
+            <pre id="handoff">Waiting for handoff payload...</pre>
+          </section>
+        </div>
+        <details class="surface">
+          <summary>Submitted payload</summary>
           <pre id="submitted-payload">Waiting for widget submission...</pre>
-        </div>
-        <div class="panel">
-          <h2>Saved Normalized Report</h2>
-          <pre id="saved-report">Waiting for API response...</pre>
-        </div>
-        <div class="panel">
-          <h2>Page Annotation</h2>
-          <pre id="page-annotation">Waiting for annotation...</pre>
-        </div>
-        <div class="panel">
-          <h2>Console / Network / Session Breadcrumbs</h2>
-          <pre id="breadcrumbs">Waiting for saved report...</pre>
-        </div>
-        <div class="panel">
-          <h2>Screenshot</h2>
-          <div id="screenshot">Waiting for screenshot...</div>
-        </div>
-        <div class="panel">
-          <h2>Memory Entry And Similar Search</h2>
-          <pre id="memory-entry">Waiting for memory write...</pre>
-        </div>
-        <div class="panel">
-          <h2>Person B Handoff</h2>
-          <pre id="handoff">Waiting for handoff payload...</pre>
-        </div>
+        </details>
       </section>
     </div>
   </main>

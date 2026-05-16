@@ -45,6 +45,8 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     assert.equal(dashboard.status, 200);
     const dashboardHtml = await dashboard.text();
     assert.match(dashboardHtml, /Lite Annotate Reports/);
+    assert.match(dashboardHtml, /Review queue/);
+    assert.match(dashboardHtml, /Open report/);
     assert.match(dashboardHtml, new RegExp(postBody.reportId));
     assert.match(dashboardHtml, /User profile crashes reading name/);
     assert.match(dashboardHtml, /button:Load User Profile/);
@@ -129,6 +131,10 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const viewBeforeHtml = await viewBefore.text();
     assert.match(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, /Dry run analysis/);
+    assert.match(viewBeforeHtml, /Evidence brief/);
+    assert.match(viewBeforeHtml, /Safe validation/);
+    assert.match(viewBeforeHtml, /PR-opening action/);
+    assert.match(viewBeforeHtml, /Raw payloads/);
     assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/autofix`));
     assert.doesNotMatch(viewBeforeHtml, /Person B/);
     assert.match(viewBeforeHtml, /Cold Agent vs Memory Agent/);

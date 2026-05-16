@@ -19,6 +19,8 @@ test('widget captures browser breadcrumbs and submits the Person A payload shape
 
   const launcher = context.document.body.children.find((child: any) => child.getAttribute('data-lite-annotate-launcher') === 'true');
   assert.ok(launcher);
+  assert.equal(launcher.textContent, 'Report bug');
+  assert.equal(launcher.getAttribute('aria-label'), 'Report a bug with technical context');
   await launcher.dispatchEvent({ type: 'click', target: launcher });
 
   const popover = context.document.body.children.find((child: any) => child !== launcher);
