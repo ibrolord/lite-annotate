@@ -1,4 +1,4 @@
-import type { RankedCandidateFile, ReportLike } from '../../indexing/code_index.js';
+import type { CodeIndex, IndexedCodeFile, RankedCandidateFile, ReportLike } from '../../indexing/code_index.js';
 import type { Diagnosis } from '../diagnosis/diagnosis.js';
 import type { GeneratedPatch } from './generate.js';
 
@@ -6,6 +6,8 @@ export interface CodePatchGeneratorInput {
   report: ReportLike;
   diagnosis: Diagnosis;
   candidates: RankedCandidateFile[];
+  index?: CodeIndex;
+  allowRepoFileSelection?: boolean;
 }
 
 export type CodePatchGenerator = (input: CodePatchGeneratorInput) => Promise<GeneratedPatch>;
@@ -32,6 +34,8 @@ interface ModelPatchResponse {
 const DEFAULT_CODE_MODEL = 'gpt-5.3-codex';
 const MAX_CONTEXT_FILES = 4;
 const MAX_FILE_CHARS = 18_000;
+const MAX_REPO_CONTEXT_FILES = 36;
+const MAX_REPO_CONTEXT_CHARS = 140_000;
 
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -57,6 +61,34 @@ function compactReport(report: ReportLike): ReportLike {
   };
 }
 
+function isTestPath(path: string): boolean {
+  return /(^|\/)(__tests__|tests?)\//i.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(path);
+}
+
+function editableRepoFiles(input: CodePatchGeneratorInput): IndexedCodeFile[] {
+  return (input.index?.files ?? []).filter((file) => !isTestPath(file.path));
+}
+
+function repoManifest(input: CodePatchGeneratorInput): string {
+  const files = editableRepoFiles(input);
+  if (files.length === 0) return 'No indexed repo files were available.';
+
+  return files
+    .map((file) => [
+      `- ${file.path}`,
+      `  language: ${file.language}`,
+      file.routeHints.length > 0 ? `  routes: ${file.routeHints.slice(0, 8).join(', ')}` : '',
+      file.exports.length > 0 ? `  exports: ${file.exports.slice(0, 8).join(', ')}` : '',
+      file.functions.length > 0 ? `  functions: ${file.functions.slice(0, 8).join(', ')}` : '',
+      file.components.length > 0 ? `  components: ${file.components.slice(0, 8).join(', ')}` : '',
+    ].filter(Boolean).join('\n'))
+    .join('\n');
+}
+
+function rankedCandidatesByPath(input: CodePatchGeneratorInput): Map<string, RankedCandidateFile> {
+  return new Map(input.candidates.map((candidate) => [candidate.path, candidate]));
+}
+
 function targetCandidates(input: CodePatchGeneratorInput): RankedCandidateFile[] {
   const targets = new Set(input.diagnosis.targetFiles);
   const rankedTargets = input.candidates.filter((candidate) => targets.has(candidate.path));
@@ -64,15 +96,43 @@ function targetCandidates(input: CodePatchGeneratorInput): RankedCandidateFile[]
   return [...rankedTargets, ...extras].slice(0, MAX_CONTEXT_FILES);
 }
 
+function repoContextFiles(input: CodePatchGeneratorInput): IndexedCodeFile[] {
+  if (!input.allowRepoFileSelection || !input.index) {
+    return targetCandidates(input).map((candidate) => candidate.file);
+  }
+
+  const rankedPaths = input.candidates.map((candidate) => candidate.path);
+  const byPath = new Map(editableRepoFiles(input).map((file) => [file.path, file]));
+  const ordered = [
+    ...rankedPaths.map((path) => byPath.get(path)).filter((file): file is IndexedCodeFile => Boolean(file)),
+    ...[...byPath.values()].filter((file) => !rankedPaths.includes(file.path)),
+  ];
+
+  const selected: IndexedCodeFile[] = [];
+  let budget = 0;
+  for (const file of ordered) {
+    if (selected.length >= MAX_REPO_CONTEXT_FILES) break;
+    const nextSize = Math.min(file.content.length, MAX_FILE_CHARS);
+    if (selected.length > 0 && budget + nextSize > MAX_REPO_CONTEXT_CHARS) continue;
+    selected.push(file);
+    budget += nextSize;
+  }
+  return selected;
+}
+
 function promptFor(input: CodePatchGeneratorInput): string {
-  const editableFiles = targetCandidates(input)
-    .map((candidate) => [
-      `### ${candidate.path}`,
-      `Reasons: ${candidate.reasons.join('; ') || 'ranked candidate'}`,
-      '```text',
-      truncate(candidate.file.content, MAX_FILE_CHARS),
-      '```',
-    ].join('\n'))
+  const rankedByPath = rankedCandidatesByPath(input);
+  const editableFiles = repoContextFiles(input)
+    .map((file) => {
+      const candidate = rankedByPath.get(file.path);
+      return [
+        `### ${file.path}`,
+        `Reasons: ${candidate?.reasons.join('; ') || (input.allowRepoFileSelection ? 'repo file available for model selection' : 'ranked candidate')}`,
+        '```text',
+        truncate(file.content, MAX_FILE_CHARS),
+        '```',
+      ].join('\n');
+    })
     .join('\n\n');
 
   return [
@@ -80,7 +140,9 @@ function promptFor(input: CodePatchGeneratorInput): string {
     '',
     'Rules:',
     '- Return full replacement content only for files you actually change.',
-    '- You may only modify diagnosis.targetFiles.',
+    input.allowRepoFileSelection
+      ? '- You may modify any provided editable repo file. Pick the correct file(s) yourself; local ranking is only a hint.'
+      : '- You may only modify diagnosis.targetFiles.',
     '- Prefer one file; use at most two files.',
     '- Do not invent files, tests, metadata, or plan artifacts.',
     '- Preserve the app design and make the narrowest change that addresses the report.',
@@ -91,6 +153,9 @@ function promptFor(input: CodePatchGeneratorInput): string {
     '',
     'Diagnosis JSON:',
     safeJson(input.diagnosis),
+    '',
+    input.allowRepoFileSelection ? 'Whole repo manifest:' : 'Ranked context manifest:',
+    input.allowRepoFileSelection ? repoManifest(input) : input.candidates.slice(0, MAX_CONTEXT_FILES).map((candidate) => `- ${candidate.path}: ${candidate.reasons.join('; ')}`).join('\n'),
     '',
     'Editable repo files and context:',
     editableFiles || 'No repo files were provided.',
@@ -181,7 +246,9 @@ export function createOpenAICodePatchGenerator(options: OpenAICodePatchGenerator
   const baseUrl = (options.baseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
 
   return async (input) => {
-    const allowedPaths = new Set(input.diagnosis.targetFiles);
+    const allowedPaths = input.allowRepoFileSelection && input.index
+      ? new Set(editableRepoFiles(input).map((file) => file.path))
+      : new Set(input.diagnosis.targetFiles);
     const schema = {
       type: 'object',
       additionalProperties: false,

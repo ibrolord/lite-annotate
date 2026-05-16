@@ -19,6 +19,7 @@ export interface PersonBPipelineInput {
   smokeCommands?: VerificationCommandInput[];
   runPackageScripts?: boolean;
   codePatchGenerator?: CodePatchGenerator;
+  repoWideModelSelection?: boolean;
 }
 
 export interface PersonBPipelineResult {
@@ -44,12 +45,35 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
 
   const index = buildCodeIndex(workspacePath);
   const candidates = rankCandidateFiles(index, input.report);
-  const diagnosis = diagnoseReport(input.report, candidates);
+  let diagnosis = diagnoseReport(input.report, candidates);
   let patch = generatePatchFromDiagnosis(diagnosis, candidates);
-  if (input.codePatchGenerator && diagnosis.shouldPatch && !patch.ok) {
+  const repoWideModelSelection = input.repoWideModelSelection ?? Boolean(input.codePatchGenerator);
+  const shouldAskModel = input.codePatchGenerator && !patch.ok && (repoWideModelSelection || diagnosis.shouldPatch);
+  if (input.codePatchGenerator && shouldAskModel) {
     const deterministicPatch = patch;
     try {
-      const modelPatch = await input.codePatchGenerator({ report: input.report, diagnosis, candidates });
+      const modelPatch = await input.codePatchGenerator({
+        report: input.report,
+        diagnosis,
+        candidates,
+        index,
+        allowRepoFileSelection: repoWideModelSelection,
+      });
+      if (modelPatch.ok) {
+        const targetFiles = modelPatch.files.map((file) => file.path);
+        diagnosis = {
+          ...diagnosis,
+          rootCause: `${diagnosis.rootCause} Model repo-wide file selection chose ${targetFiles.join(', ') || 'no file changes'} for the final patch.`,
+          evidence: [
+            ...diagnosis.evidence,
+            `Model repo-wide file selection chose: ${targetFiles.join(', ') || 'no file changes'}`,
+          ],
+          targetFiles,
+          confidence: Math.max(diagnosis.confidence, 0.82),
+          shouldPatch: true,
+          severity: diagnosis.severity === 'low' ? 'medium' : diagnosis.severity,
+        };
+      }
       patch = modelPatch.ok || !deterministicPatch.ok
         ? modelPatch
         : {
