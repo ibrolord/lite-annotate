@@ -1,21 +1,34 @@
 # Lite Annotate
 
-Lite Annotate turns in-app bug reports into engineering-ready fixes with a drop-in widget for any browser-based app repo.
+Lite Annotate turns in-product bug reports into engineering-ready work. A small browser widget captures the user's report together with the technical context engineers usually have to reconstruct: route, browser metadata, console errors, network breadcrumbs, session breadcrumbs, selected element context, and screenshot status.
 
-Add one script tag, point the report at a GitHub repo, and Lite Annotate captures the user report plus the technical context engineers usually have to reconstruct: route, browser state, console errors, network breadcrumbs, lightweight session events, and a screenshot. Each report becomes durable engineering memory, then flows through evidence-backed diagnosis, scoped patch generation, local verification, and optional GitHub PR creation.
+The backend stores each report as durable engineering memory, retrieves related prior context, runs repo-aware diagnosis, generates a scoped patch when the evidence supports it, verifies the patch locally, and can open a guarded GitHub pull request.
 
 ```text
 user report
   -> browser evidence
   -> durable memory
   -> repo-aware diagnosis
-  -> verified patch
+  -> scoped patch
+  -> local verification
   -> guarded pull request
 ```
 
-## 5-Minute Integration
+## Why It Exists
 
-Add this to any web page:
+Most customer bug reports are not actionable on arrival. They describe what felt broken, but they rarely include the route, browser state, console failure, network request, prior incidents, likely source file, or verification path.
+
+Lite Annotate makes that handoff explicit. Each report becomes a structured engineering artifact with receipts:
+
+- **Capture:** the widget records annotation text, route, browser metadata, console errors, network breadcrumbs, session breadcrumbs, selected element context, and screenshot status.
+- **Memory:** reports, diagnoses, and outcomes are written to GBrain-compatible memory so future investigations start with prior context.
+- **Diagnosis:** the worker ranks candidate files and explains the likely root cause with browser, memory, and code evidence before attempting a patch.
+- **Verification:** generated patches are constrained to diagnosed target files and checked in a temporary workspace before any PR action.
+- **Review:** report views expose memory impact, cold-agent versus memory-assisted comparison, verification output, and handoff payloads for engineering review.
+
+## Integration
+
+Add the widget config and hosted script to any browser-based web app:
 
 ```html
 <script>
@@ -26,57 +39,63 @@ Add this to any web page:
 <script async src="https://lite-annotate.example.com/widget.js"></script>
 ```
 
-That is the whole customer-repo integration for capture. No npm package, framework adapter, build plugin, or SDK call is required.
+The customer application does not need an npm package, framework adapter, build plugin, or SDK call for the capture path. `ANNOTATE_REPO` connects the report to the GitHub repository Lite Annotate should analyze.
 
-For hackathon demos, use the staged path:
+Typical rollout:
 
-1. **Capture:** add the widget snippet and submit a bug report.
-2. **Inspect:** open `/reports/dashboard` or `/reports/:id/view`.
-3. **Dry run:** call `POST /reports/:id/autofix?dryRun=1` to get diagnosis and verification without opening a PR.
-4. **PR gate:** configure GitHub credentials and call `POST /reports/:id/autofix` only when the guarded PR path is needed.
+1. Add the widget snippet to the target app.
+2. Submit a report from the embedded widget.
+3. Review captured reports at `/reports/dashboard` or `/reports/:id/view`.
+4. Run dry-run analysis with `POST /reports/:id/autofix?dryRun=1`.
+5. Enable GitHub credentials only when verified PR creation is desired.
 
-See [docs/INTEGRATION_AUDIT.md](docs/INTEGRATION_AUDIT.md) for the honest effort breakdown.
-
-## Why It Exists
-
-Most customer bug reports arrive without the facts needed to act on them. The reporter knows what felt broken; the engineering team still has to recover the route, reproduce the failure, find the likely file, remember whether this happened before, and decide whether an AI-generated fix is safe.
-
-Lite Annotate is positioned around that missing handoff. It makes every report a structured engineering artifact with receipts:
-
-- **Capture:** the widget records annotation text, URL, browser metadata, console errors, network breadcrumbs, session breadcrumbs, and screenshot status.
-- **Memory:** reports, diagnoses, and outcomes are written to GBrain-compatible memory so future agents start with prior context instead of cold scans.
-- **Diagnosis:** the worker ranks candidate files and explains the root cause with browser, memory, and code evidence before attempting a patch.
-- **Verification:** patches are constrained to diagnosed target files and checked in a temp workspace before any public PR action.
-- **Review:** report views expose Memory Impact, Cold Agent vs Memory Agent comparison, and Memory Receipts for engineering review.
+Dry-run analysis is the default review path. It exercises diagnosis and verification without opening a public branch or pull request.
 
 ## Product Surface
 
-- Drop-in widget config through `window.ANNOTATE_API_URL`, `window.ANNOTATE_PROJECT_ID`, and `window.ANNOTATE_REPO`
-- Hosted demo app at `/demo`
-- Hosted widget script at `/widget.js`
-- Report intake API at `POST /report`
-- Report dashboard at `/reports/dashboard`
-- Report detail at `/reports/:id/view`
-- Structured handoff payload at `/reports/:id/handoff`
-- Dry-run analysis at `POST /reports/:id/autofix?dryRun=1`
-- Verified PR path at `POST /reports/:id/autofix`
+| Surface | Purpose |
+| --- | --- |
+| `GET /widget.js` | Hosted browser widget script. |
+| `GET /demo` | Local validation page for the capture flow. |
+| `POST /report` | Report intake endpoint. |
+| `GET /reports` | JSON list of saved reports. |
+| `GET /reports/dashboard` | Review queue for captured reports. |
+| `GET /reports/:id/view` | Human-readable report detail with memory, diagnosis, and verification context. |
+| `GET /reports/:id/handoff` | Structured handoff payload for downstream agents or review tooling. |
+| `GET /reports/:id/memory` | Similar memory, memory impact, and receipt trail. |
+| `POST /reports/:id/autofix?dryRun=1` | Diagnosis and verification without PR creation. |
+| `POST /reports/:id/autofix` | Full autofix path with guarded PR creation when credentials and gates allow it. |
+| `POST /reports/:id/gstack/investigate` | Optional protected GStack investigation trigger. |
 
-Dry run is the preferred review mode: it exercises diagnosis and verification without opening a PR. The normal autofix action is gated and should only open a PR after candidate ranking, diagnosis confidence, patch scope, patch application, and verification all pass.
+## How the Pipeline Works
 
-## Current Proof
+1. **Normalize the report.** `POST /report` validates and normalizes the widget payload into the `LiteReport` contract.
+2. **Persist report and memory.** Reports are stored locally, with GBrain HTTP memory used when configured and markdown memory as a fallback.
+3. **Build repo context.** The worker clones or opens the target repo, indexes JavaScript and TypeScript files, and ranks likely candidates from route, stack, symbol, annotation, and test proximity signals.
+4. **Diagnose before patching.** Diagnosis records severity, root cause, evidence, target files, fix strategy, confidence, and whether a patch is justified.
+5. **Generate a scoped patch.** Deterministic patching is used where available. A configured OpenAI-compatible code model can produce a bounded patch when local triage needs repo-wide file selection.
+6. **Verify locally.** Patches are applied in a temporary workspace and must pass syntax checks, package-script checks when enabled, and any supplied smoke commands.
+7. **Open a PR only after gates pass.** GitHub PR creation is skipped unless verification succeeds and credentials are configured.
 
-The current implementation includes the end-to-end product loop:
+## Current Scope
 
-- Widget capture with annotation, console, network, session, browser, and screenshot fields.
-- Hono API for report intake, report storage, dashboard, report detail, memory, handoff, and autofix routes.
-- Native GBrain HTTP helper utilities plus GitHub markdown fallback memory.
-- Repo indexing and candidate ranking for JavaScript/TypeScript projects.
-- Structured diagnosis, scoped patch generation, patch verification, and PR eligibility gates.
-- Dry-run analysis mode for safe demos and review.
-- Hosted PR-opening proof against the demo repo, recorded in [docs/TRACKER.md](docs/TRACKER.md).
-- Optional protected GStack runner API for remote review evidence.
+Implemented:
 
-This is not production-hardened SaaS yet. Multi-tenant auth, billing, abuse controls, broad language support, and autonomous merge are intentionally outside the current boundary.
+- Browser widget capture for annotation, console, network, session, browser, route, and screenshot fields.
+- Hono API for report intake, report storage, dashboard, report detail, memory, handoff, autofix, and GStack review routes.
+- GBrain-compatible memory with native HTTP integration and markdown fallback.
+- JavaScript and TypeScript repo indexing with candidate ranking.
+- Structured diagnosis, deterministic and model-backed patch generation, local patch verification, and guarded GitHub PR creation.
+- Dry-run analysis for review without external PR actions.
+- Optional protected GStack runner integration for investigation, QA, review, and ship workflows.
+
+Not yet in scope:
+
+- Multi-tenant auth, billing, and tenant-level administration.
+- Full session replay.
+- Broad non-JavaScript language support.
+- Autonomous merge.
+- Production-grade abuse controls, retention policies, and compliance workflows.
 
 ## Run Locally
 
@@ -86,7 +105,7 @@ Install dependencies:
 npm install
 ```
 
-Start the app:
+Start the API:
 
 ```bash
 npm run dev
@@ -107,42 +126,53 @@ npm run typecheck
 
 ## Configuration
 
-The app can run with local/fallback memory, but these environment variables enable the full external integrations:
+Lite Annotate runs with local report storage and markdown memory by default. These variables enable external services and stricter workflows:
 
 ```text
+REPORT_STORE_DIR=<optional local report store path>
 MEMORY_PROVIDER=gbrain|github-markdown
+MEMORY_DIR=<optional markdown memory path>
+
 GBRAIN_MCP_URL=https://<gbrain-service>/mcp
 GBRAIN_MCP_TOKEN=<optional-static-token>
 GBRAIN_CLIENT_ID=<optional-oauth-client-id>
 GBRAIN_CLIENT_SECRET=<optional-oauth-client-secret>
 GBRAIN_OAUTH_SCOPE="read write"
 
+OPENAI_API_KEY=<token for model-backed patch generation>
+OPENAI_BASE_URL=https://api.openai.com/v1
+AUTOFIX_CODE_MODEL=gpt-5.3-codex-spark
+AUTOFIX_DISABLE_LLM_PATCH=true|false
+AUTOFIX_RUN_PACKAGE_SCRIPTS=true|false
+
 GITHUB_TOKEN=<token with repo access>
 GITHUB_REPO=<owner/repo used for PR creation>
 TARGET_REPO=<owner/repo or URL used for repo cloning>
 TARGET_REPO_BRANCH=<optional branch>
 REPO_WORKSPACE_ROOT=<optional clone/cache root>
+
+PUBLIC_BASE_URL=https://<lite-annotate-host>
+GSTACK_UI_TRIGGER_ENABLED=1
+GSTACK_TRIGGER_TOKEN=<product trigger token>
+GSTACK_RUNNER_URL=https://<gstack-runner-host>
+GSTACK_RUNNER_TOKEN=<runner token>
+GSTACK_CALLBACK_TOKEN=<callback token expected by Lite Annotate>
+GSTACK_CALLBACK_BASE_URL=https://<callback-host>
+GSTACK_ALLOW_PR=1
 ```
 
-The worker uses the target repository as the source of truth for file contents. Memory improves context and retrieval, but PR generation still depends on scoped diagnosis and local verification.
+The worker treats the target repository as the source of truth for file contents. Memory improves retrieval and review context, but patch generation still depends on scoped diagnosis and local verification.
 
 ## Documentation
 
-Start here:
-
-- [PRODUCT.md](PRODUCT.md) - product positioning, users, tone, and principles.
+- [PRODUCT.md](PRODUCT.md) - product positioning, users, tone, and boundaries.
 - [DESIGN.md](DESIGN.md) - interface register and visual constraints.
-- [docs/INTEGRATION_AUDIT.md](docs/INTEGRATION_AUDIT.md) - integration effort audit and hackathon positioning.
-- [docs/PRD.md](docs/PRD.md) - functional requirements and product boundaries.
-- [docs/GBRAIN_DEMO_STORY.md](docs/GBRAIN_DEMO_STORY.md) - demo narrative for memory-assisted engineering review.
-- [docs/TRACKER.md](docs/TRACKER.md) - implementation status, proof points, and commit ledger.
+- [docs/PRD.md](docs/PRD.md) - product requirements and operating constraints.
+- [docs/INTEGRATION_AUDIT.md](docs/INTEGRATION_AUDIT.md) - integration effort and rollout levels.
+- [docs/GSTACK_RUNNER.md](docs/GSTACK_RUNNER.md) - protected remote GStack runner setup.
+- [docs/TRACKER.md](docs/TRACKER.md) - implementation status, validation notes, and commit ledger.
 
-Internal planning history remains in:
-
-- [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md)
-- [docs/AGENT_EXECUTION_PLAN.md](docs/AGENT_EXECUTION_PLAN.md)
-- [docs/GBRAIN_VALIDATION.md](docs/GBRAIN_VALIDATION.md)
-- [docs/GSTACK_RUNNER.md](docs/GSTACK_RUNNER.md)
+Historical planning notes live under `docs/` and are not required for product integration.
 
 ## Safety Model
 
