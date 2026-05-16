@@ -7,13 +7,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
   "include": [
-    "api/index.ts",
-    "api/gbrain.ts",
-    "api/report_contract.ts",
-    "api/report_store.ts",
+    "api/**/*.ts",
     "tests/**/*.ts"
+  ],
+  "exclude": [
+    "api/create_pr.ts"
   ]
 }

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "npx tsx api/index.ts",
     "start": "tsx api/index.ts",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "tsx --test \"tests/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

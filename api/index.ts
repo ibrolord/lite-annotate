@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMemoryAdapter, type MemoryAdapter } from './gbrain.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
+import { runAutofix, type AutofixResult } from './autofix.js';
+import type { LiteReport } from './report_contract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
@@ -15,10 +17,14 @@ const repoRoot = join(__dirname, '..');
 export function createApp(deps: {
   store?: ReportStore;
   memory?: MemoryAdapter;
+  autofixRunner?: (reportId: string, report: LiteReport) => Promise<unknown>;
 } = {}) {
   const app = new Hono();
   const store = deps.store ?? new ReportStore();
   const memory = deps.memory ?? createMemoryAdapter();
+  const autofixRunner: (reportId: string, report: LiteReport) => Promise<unknown> =
+    deps.autofixRunner ??
+    ((reportId, report) => runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1]));
 
   app.use('*', cors());
 
@@ -108,6 +114,7 @@ export function createApp(deps: {
       repo: record.report.repo,
       normalizedReport: record.report,
       memorySearchResult: similar,
+      autofix: record.autofix ?? null,
     });
   });
 
@@ -115,7 +122,47 @@ export function createApp(deps: {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.html('<h1>Report not found</h1>', 404);
     const similar = await memory.searchSimilar(record.report);
-    return c.html(renderReportHtml(record.report.id, record.report, record.raw, record.memory, similar));
+    return c.html(renderReportHtml(record.report.id, record.report, record.raw, record.memory, similar, record.autofix ?? null));
+  });
+
+  app.get('/reports/:id/autofix', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    return c.json({ reportId: record.report.id, autofix: record.autofix ?? null });
+  });
+
+  app.post('/reports/:id/autofix', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    try {
+      const result = await autofixRunner(record.report.id, record.report);
+      const autofix = summarizeAutofixResult(result);
+      await memory.putDiagnosis(record.report.id, autofix.diagnosis);
+      await memory.putOutcome(record.report.id, {
+        status: autofix.status,
+        pr: autofix.pr,
+        verification: autofix.verification,
+      });
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        autofix,
+        updatedAt: new Date().toISOString(),
+      }));
+      return c.json({ reportId: record.report.id, autofix: updated?.autofix ?? autofix });
+    } catch (err) {
+      const autofix = {
+        status: 'failed',
+        error: errorMessage(err),
+        updatedAt: new Date().toISOString(),
+      };
+      await store.update(record.report.id, (current) => ({
+        ...current,
+        autofix,
+        updatedAt: new Date().toISOString(),
+      }));
+      return c.json({ reportId: record.report.id, autofix }, 500);
+    }
   });
 
   app.post('/reports/:id/diagnosis', async (c) => {
@@ -285,7 +332,8 @@ function renderReportHtml(
   report: unknown,
   raw: unknown,
   memory: unknown,
-  similar: unknown
+  similar: unknown,
+  autofix: unknown
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -312,8 +360,45 @@ function renderReportHtml(
   <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
   <h2>Memory Search</h2>
   <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
+  <h2>Person B Autofix</h2>
+  <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
 </body>
 </html>`;
+}
+
+interface StoredAutofixSummary extends Record<string, unknown> {
+  status: string;
+  candidates: unknown[];
+  diagnosis: unknown;
+  patch: unknown;
+  verification: unknown;
+  pr: unknown;
+  prError?: string;
+  meta?: unknown;
+  updatedAt: string;
+}
+
+function summarizeAutofixResult(result: unknown): StoredAutofixSummary {
+  const typed = result as Partial<AutofixResult> & {
+    pipeline?: {
+      candidates?: Array<{ path: string; score: number; reasons: string[] }>;
+      diagnosis?: unknown;
+      patch?: unknown;
+      verification?: unknown;
+    };
+    meta?: unknown;
+  };
+  return {
+    status: typed.status ?? 'unknown',
+    candidates: typed.pipeline?.candidates?.slice(0, 5) ?? [],
+    diagnosis: typed.pipeline?.diagnosis ?? null,
+    patch: typed.pipeline?.patch ?? null,
+    verification: typed.pipeline?.verification ?? null,
+    pr: typed.pr ?? null,
+    prError: typed.prError,
+    meta: typed.meta,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function escapeHtml(value: string): string {
