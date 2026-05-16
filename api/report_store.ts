@@ -6,7 +6,12 @@ export interface StoredReportRecord {
   report: LiteReport;
   raw: unknown;
   memory?: unknown;
+  autofix?: StoredAutofixRecord;
   updatedAt: string;
+}
+
+export interface StoredAutofixRecord extends Record<string, unknown> {
+  status?: string;
 }
 
 export class ReportStore {
@@ -25,6 +30,14 @@ export class ReportStore {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
+  }
+
+  async update(reportId: string, update: (record: StoredReportRecord) => StoredReportRecord): Promise<StoredReportRecord | null> {
+    const record = await this.get(reportId);
+    if (!record) return null;
+    const next = update(record);
+    await this.put(next);
+    return next;
   }
 
   async list(): Promise<LiteReport[]> {

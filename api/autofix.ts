@@ -53,7 +53,7 @@ function envOptions(): AutofixOptions {
 
 export async function runAutofix(
   bugId: string,
-  report: Record<string, unknown>,
+  report: PersonBPipelineInput['report'],
   options: AutofixOptions = envOptions()
 ): Promise<AutofixResult> {
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
@@ -105,6 +105,6 @@ export async function runAutofix(
   return { status: 'pr_opened', pipeline, pr: prResult.pr };
 }
 
-export async function triggerAutofix(bugId: string, report: Record<string, unknown>): Promise<AutofixResult> {
+export async function triggerAutofix(bugId: string, report: PersonBPipelineInput['report']): Promise<AutofixResult> {
   return runAutofix(bugId, report);
 }
