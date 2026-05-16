@@ -186,8 +186,7 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
       (missingProperty ? 0.15 : 0) +
       (propertyRead ? 0.12 : 0) +
       (visualLayout && styleLine ? 0.11 : 0) +
-      (color && /\.(?:s?css)$/i.test(top.path) ? 0.1 : 0) +
-      (top.path.includes('users') || top.path.includes('profile') || top.path.includes('customer') ? 0.08 : 0)
+      (color && /\.(?:s?css)$/i.test(top.path) ? 0.1 : 0)
   );
 
   const targetFiles = visualLayout
@@ -200,7 +199,7 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   const rootCause = property && propertyRead && guardedCurrentCode
     ? `${top.path} is the stack-frame source for the reported missing-record crash, and the current repo already guards the missing record before reading ${property}.`
     : property && propertyRead
-      ? `${top.path} dereferences user.${property} when the lookup returns undefined or a missing user.`
+      ? `${top.path} dereferences a lookup result's ${property} property before confirming the record exists.`
       : visualLayout
         ? `${top.path} is the highest-ranked UI file for a visual layout report, and the pinned page evidence points to nearby markup or styles.`
         : `${top.path} is the highest-ranked source file for the report, but the exact failing dereference needs more evidence.`;
@@ -214,7 +213,7 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
     fixStrategy: property && guardedCurrentCode
       ? `Verify the existing missing-record guard before reading ${property}; patch only if the guard is absent.`
       : property
-        ? `Add a missing-user guard or fallback before reading ${property}.`
+        ? `Add a missing-record guard or fallback before reading ${property}.`
         : visualLayout
           ? color
             ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`

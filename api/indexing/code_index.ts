@@ -459,7 +459,6 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
       if (visualLayoutReport && isStylePath(file.path) && /button|color|colour|background|cta|primary/i.test(reportText(report))) {
         addScore(state, 1200, 'stylesheet matches visual color/button report');
         if (/\.button-primary\b/.test(file.content)) addScore(state, 900, 'stylesheet defines primary button styles');
-        if (/\.checkout-form\b/.test(file.content)) addScore(state, 500, 'stylesheet defines checkout form styles');
       }
 
       if (visualLayoutReport && isMarkupPath(file.path) && /<h[1-6]\b|class=|style=|data-view=/i.test(file.content)) {

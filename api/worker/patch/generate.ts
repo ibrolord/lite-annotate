@@ -58,63 +58,6 @@ function generateMissingObjectGuard(content: string): { patched?: string; alread
   return { patched: patched.join('\n') };
 }
 
-function requestedButtonColor(diagnosis: Diagnosis): { value: string; hoverValue: string; label: string } | null {
-  const text = [diagnosis.rootCause, diagnosis.fixStrategy, ...diagnosis.evidence].join('\n');
-  const hex = text.match(/#[0-9a-f]{3,8}\b/i)?.[0];
-  if (hex) return { value: hex, hoverValue: hex, label: hex };
-
-  const color = text.match(/\b(blue|green|red|orange|purple|black|white|yellow)\b/i)?.[1]?.toLowerCase();
-  switch (color) {
-    case 'blue':
-      return { value: '#2563eb', hoverValue: '#1d4ed8', label: 'blue' };
-    case 'green':
-      return { value: '#2f8f46', hoverValue: '#25733a', label: 'green' };
-    case 'red':
-      return { value: '#dc2626', hoverValue: '#b91c1c', label: 'red' };
-    case 'orange':
-      return { value: '#ea580c', hoverValue: '#c2410c', label: 'orange' };
-    case 'purple':
-      return { value: '#7c3aed', hoverValue: '#6d28d9', label: 'purple' };
-    case 'black':
-      return { value: '#111827', hoverValue: '#030712', label: 'black' };
-    case 'white':
-      return { value: '#ffffff', hoverValue: '#f8fafc', label: 'white' };
-    case 'yellow':
-      return { value: '#ca8a04', hoverValue: '#a16207', label: 'yellow' };
-    default:
-      return null;
-  }
-}
-
-function upsertCssBackgroundRule(content: string, selector: string, value: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const blockPattern = new RegExp(`(${escaped}\\s*\\{)([^}]*)(\\})`, 'm');
-  const match = content.match(blockPattern);
-  if (!match) {
-    const separator = content.endsWith('\n') ? '\n' : '\n\n';
-    return `${content}${separator}${selector} {\n  background: ${value};\n}\n`;
-  }
-
-  const body = match[2] ?? '';
-  const nextBody = /background\s*:/.test(body)
-    ? body.replace(/background\s*:[^;]+;/, `background: ${value};`)
-    : `${body.trimEnd()}\n  background: ${value};\n`;
-  return content.replace(blockPattern, `$1${nextBody}$3`);
-}
-
-function generateButtonColorPatch(diagnosis: Diagnosis, content: string): string | null {
-  const color = requestedButtonColor(diagnosis);
-  if (!color || !/button|background|color/i.test(diagnosis.fixStrategy)) return null;
-
-  const scopedToCheckout = diagnosis.evidence.some((item) => /route:\s*\/checkout/i.test(item));
-  const selector = scopedToCheckout ? '.checkout-form .button-primary' : '.button-primary';
-  const hoverSelector = `${selector}:hover`;
-
-  let patched = upsertCssBackgroundRule(content, selector, color.value);
-  patched = upsertCssBackgroundRule(patched, hoverSelector, color.hoverValue);
-  return patched === content ? null : patched;
-}
-
 export function generatePatchFromDiagnosis(
   diagnosis: Diagnosis,
   candidates: RankedCandidateFile[]
@@ -127,13 +70,6 @@ export function generatePatchFromDiagnosis(
   const files: StructuredPatchFile[] = [];
   const alreadyGuarded: string[] = [];
   for (const candidate of targetCandidates(diagnosis, candidates)) {
-    if (/\.(?:s?css)$/i.test(candidate.path)) {
-      const patched = generateButtonColorPatch(diagnosis, candidate.file.content);
-      if (!patched || patched === candidate.file.content) continue;
-      files.push({ path: candidate.path, content: patched });
-      continue;
-    }
-
     const result = generateMissingObjectGuard(candidate.file.content);
     if (result?.alreadyGuarded) {
       alreadyGuarded.push(candidate.path);
@@ -163,8 +99,6 @@ export function generatePatchFromDiagnosis(
     ok: true,
     files,
     source: 'deterministic',
-    summary: files.some((file) => /\.(?:s?css)$/i.test(file.path))
-      ? 'Applied a scoped button background color override.'
-      : 'Inserted a narrow missing-object fallback guard.',
+    summary: 'Inserted a narrow missing-object fallback guard.',
   };
 }

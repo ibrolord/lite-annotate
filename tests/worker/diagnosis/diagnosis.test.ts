@@ -70,8 +70,8 @@ test('diagnoseReport returns structured pinned demo diagnosis with evidence and 
     assert.equal(diagnosis.type, 'bug');
     assert.equal(diagnosis.severity, 'medium');
     assert.deepEqual(diagnosis.targetFiles, ['src/users.js']);
-    assert.match(diagnosis.rootCause, /user\.name/);
-    assert.match(diagnosis.rootCause, /undefined|missing|not found/i);
+    assert.match(diagnosis.rootCause, /name property/);
+    assert.match(diagnosis.rootCause, /record exists/i);
     assert.match(diagnosis.fixStrategy, /fallback|guard|missing/i);
     assert.ok(diagnosis.confidence >= 0.75);
     assert.equal(diagnosis.shouldPatch, true);

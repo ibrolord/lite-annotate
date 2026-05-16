@@ -153,3 +153,28 @@ test('openVerifiedPR refuses when target file is not in top 3 candidates', async
   assert.equal(called, false);
   assert.match(result.error ?? '', /top 3/i);
 });
+
+test('openVerifiedPR refuses when no verification checks were recorded', async () => {
+  const pipeline = basePipelineResult();
+  pipeline.verification = {
+    ok: true,
+    modifiedFiles: ['src/users.js'],
+    commands: [],
+  };
+
+  let called = false;
+  const result = await openVerifiedPR({
+    pipeline,
+    report: { id: 'bug_123', title: 'User profile crashes reading name' },
+    repoUrl: 'https://github.com/ibrolord/lite-annotate-demo',
+    token: 'ghs_test',
+    createPR: async () => {
+      called = true;
+      throw new Error('should not call GitHub');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(called, false);
+  assert.match(result.error ?? '', /no verification checks/i);
+});

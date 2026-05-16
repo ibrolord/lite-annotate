@@ -267,7 +267,7 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
     assert.equal(result.pipeline.patch.ok, true);
     assert.equal(result.pipeline.verification?.ok, true);
     assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/customer.js']);
-    assert.ok(result.pipeline.verification?.commands.some((command) => command.stdout.includes('Customer not found')));
+    assert.ok(result.pipeline.verification?.commands.some((command) => command.name === 'node --check src/customer.js'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -309,7 +309,7 @@ test('runAutofix verifies the Cedar & Sail loyalty crash when repo HEAD is alrea
     assert.match(result.pipeline.patch.error ?? '', /already contains/i);
     assert.equal(result.pipeline.verification?.ok, true);
     assert.deepEqual(result.pipeline.verification?.modifiedFiles, []);
-    assert.ok(result.pipeline.verification?.commands.some((command) => command.stdout.includes('Customer not found')));
+    assert.deepEqual(result.pipeline.verification?.commands, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -386,16 +386,34 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      codePatchGenerator: async ({ candidates, diagnosis }) => {
+        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
+        assert.ok(styles);
+        assert.deepEqual(diagnosis.targetFiles, ['src/styles.css']);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          files: [
+            {
+              path: 'src/styles.css',
+              content: `${styles.file.content}\n.checkout-form .button-primary {\n  background: #2563eb;\n}\n`,
+            },
+          ],
+        };
+      },
     });
 
     assert.equal(result.status, 'verified_no_pr');
     assert.equal(result.pipeline.candidates[0]?.path, 'src/styles.css');
     assert.deepEqual(result.pipeline.diagnosis.targetFiles, ['src/styles.css']);
     assert.equal(result.pipeline.patch.ok, true);
+    assert.equal(result.pipeline.patch.source, 'llm');
     assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css']);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /\.checkout-form \.button-primary/);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /#2563eb/);
     assert.equal(result.pipeline.verification?.ok, true);
+    assert.ok(result.pipeline.verification?.commands.some((command) => command.name === 'css sanity src/styles.css'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -443,7 +461,7 @@ test('runAutofix does not run the profile smoke command for visual ecommerce rep
     assert.equal(result.status, 'verified_no_pr');
     assert.equal(result.pipeline.patch.source, 'llm');
     assert.equal(result.pipeline.verification?.ok, true);
-    assert.deepEqual(result.pipeline.verification?.commands, []);
+    assert.ok(result.pipeline.verification?.commands.some((command) => command.name === 'css sanity src/styles.css'));
     assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/styles.css']);
   } finally {
     rmSync(root, { recursive: true, force: true });

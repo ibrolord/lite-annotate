@@ -169,3 +169,44 @@ test('verifyStructuredPatch can skip package scripts for focused hosted autofix 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('verifyStructuredPatch runs generic CSS sanity checks for stylesheet patches', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-css-verify-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'styles.css'), '.hero { line-height: 1; }\n');
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/styles.css'],
+      files: [{ path: 'src/styles.css', content: '.hero { line-height: 1.08; }\n' }],
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.modifiedFiles, ['src/styles.css']);
+    assert.ok(result.commands.some((command) => command.name === 'css sanity src/styles.css'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyStructuredPatch rejects malformed CSS before PR creation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-css-verify-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'styles.css'), '.hero { line-height: 1; }\n');
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/styles.css'],
+      files: [{ path: 'src/styles.css', content: '.hero { line-height: 1.08;\n' }],
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? '', /css sanity src\/styles\.css failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

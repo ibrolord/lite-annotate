@@ -61,6 +61,56 @@ function isJavaScriptPath(path: string): boolean {
   return /\.(?:cjs|mjs|js|jsx)$/i.test(path);
 }
 
+function isCssPath(path: string): boolean {
+  return /\.(?:css|scss)$/i.test(path);
+}
+
+function isHtmlPath(path: string): boolean {
+  return /\.(?:html)$/i.test(path);
+}
+
+function inlineCheck(name: string, check: () => string): VerificationCommandResult {
+  try {
+    return { name, ok: true, stdout: check(), stderr: '' };
+  } catch (error) {
+    return {
+      name,
+      ok: false,
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function assertNoConflictMarkers(path: string, content: string): void {
+  if (/^(<<<<<<<|=======|>>>>>>>) /m.test(content)) {
+    throw new Error(`${path} contains merge conflict markers`);
+  }
+}
+
+function checkBalancedDelimiters(path: string, content: string, open: string, close: string): void {
+  let depth = 0;
+  for (const char of content) {
+    if (char === open) depth += 1;
+    if (char === close) depth -= 1;
+    if (depth < 0) throw new Error(`${path} has an unmatched ${close}`);
+  }
+  if (depth !== 0) throw new Error(`${path} has unbalanced ${open}${close}`);
+}
+
+function validateCss(path: string, content: string): string {
+  assertNoConflictMarkers(path, content);
+  checkBalancedDelimiters(path, content, '{', '}');
+  checkBalancedDelimiters(path, content, '(', ')');
+  return 'CSS sanity check passed';
+}
+
+function validateHtml(path: string, content: string): string {
+  assertNoConflictMarkers(path, content);
+  checkBalancedDelimiters(path, content, '<', '>');
+  return 'HTML sanity check passed';
+}
+
 function runCommand(cwd: string, command: VerificationCommandInput, displayName?: string): VerificationCommandResult {
   const name = displayName ?? [command.command, ...command.args].join(' ');
   try {
@@ -150,6 +200,26 @@ export function verifyStructuredPatch(input: StructuredPatchVerificationInput): 
       { command: process.execPath, args: ['--check', file] },
       `node --check ${file}`
     );
+    commands.push(result);
+    if (!result.ok) {
+      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+    }
+  }
+
+  for (const file of modifiedFiles.filter(isCssPath)) {
+    const absolutePath = resolveInside(workspacePath, file);
+    const content = absolutePath ? readFileSync(absolutePath, 'utf8') : '';
+    const result = inlineCheck(`css sanity ${file}`, () => validateCss(file, content));
+    commands.push(result);
+    if (!result.ok) {
+      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+    }
+  }
+
+  for (const file of modifiedFiles.filter(isHtmlPath)) {
+    const absolutePath = resolveInside(workspacePath, file);
+    const content = absolutePath ? readFileSync(absolutePath, 'utf8') : '';
+    const result = inlineCheck(`html sanity ${file}`, () => validateHtml(file, content));
     commands.push(result);
     if (!result.ok) {
       return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };

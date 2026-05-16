@@ -239,6 +239,9 @@ function validatePRGate(pipeline: PersonBPipelineResult): string | null {
   if (!pipeline.verification?.ok) {
     return `PR gate failed: verification failed${pipeline.verification?.error ? ` (${pipeline.verification.error})` : ''}.`;
   }
+  if (pipeline.verification.commands.length === 0) {
+    return 'PR gate failed: no verification checks were recorded.';
+  }
   const modified = new Set(pipeline.verification.modifiedFiles);
   const unverifiedPatch = pipeline.patch.files.find((file) => !modified.has(file.path));
   if (unverifiedPatch) {

@@ -31,11 +31,11 @@ interface ModelPatchResponse {
   risks?: unknown;
 }
 
-const DEFAULT_CODE_MODEL = 'gpt-5.3-codex';
+const DEFAULT_CODE_MODEL = 'gpt-5.3-codex-spark';
 const MAX_CONTEXT_FILES = 4;
 const MAX_FILE_CHARS = 18_000;
-const MAX_REPO_CONTEXT_FILES = 36;
-const MAX_REPO_CONTEXT_CHARS = 140_000;
+const MAX_REPO_CONTEXT_FILES = 16;
+const MAX_REPO_CONTEXT_CHARS = 70_000;
 
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -274,48 +274,55 @@ export function createOpenAICodePatchGenerator(options: OpenAICodePatchGenerator
       },
     };
 
-    const response = await fetch(`${baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: 'system',
-            content: 'You are a senior coding agent. Return only schema-valid JSON patches against the provided files.',
-          },
-          {
-            role: 'user',
-            content: promptFor(input),
-          },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'lite_annotate_autofix_patch',
-            strict: true,
-            schema,
-          },
+    const modelCandidates = model === DEFAULT_CODE_MODEL ? [model, 'gpt-5.3-codex'] : [model];
+    let lastError = '';
+    for (const candidateModel of modelCandidates) {
+      const response = await fetch(`${baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${options.apiKey}`,
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          model: candidateModel,
+          input: [
+            {
+              role: 'system',
+              content: 'You are a senior coding agent. Return only schema-valid JSON patches against the provided files.',
+            },
+            {
+              role: 'user',
+              content: promptFor(input),
+            },
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'lite_annotate_autofix_patch',
+              strict: true,
+              schema,
+            },
+          },
+        }),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      return {
-        ok: false,
-        files: [],
-        source: 'llm',
-        model,
-        error: `OpenAI patch generation failed: ${response.status} ${truncate(errorText, 500)}`.trim(),
-      };
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        lastError = `OpenAI patch generation failed with ${candidateModel}: ${response.status} ${truncate(errorText, 500)}`.trim();
+        continue;
+      }
+
+      const data = await response.json() as unknown;
+      return parseModelPatch(responseText(data), candidateModel, allowedPaths);
     }
 
-    const data = await response.json() as unknown;
-    return parseModelPatch(responseText(data), model, allowedPaths);
+    return {
+      ok: false,
+      files: [],
+      source: 'llm',
+      model,
+      error: lastError || 'OpenAI patch generation failed before returning a response.',
+    };
   };
 }
 

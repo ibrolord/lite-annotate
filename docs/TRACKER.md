@@ -73,6 +73,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `gstack-mode-stack-ranking-2026-05-16` | GStack Runner / Ranking | Preserved runner mode and stack-frame evidence | Done | `npm run typecheck`; `npm test` 45/45; callbacks keep review mode, code ranking reads console stack fields and prioritizes first stack frame |
 | `hosted-gstack-review-2026-05-16` | GStack Runner / Deploy | Ran authorized hosted GStack runner review | Done | Railway deployment `7a1e00bc-404a-4e94-8974-a03e476e7de4`; unauthenticated trigger returns 401; authorized job `gstack_84508758-0dbd-493d-aaf3-3867b6e31b69` returned `passed` and replaced the stale queued record |
 | `model-backed-autofix-2026-05-16` | Person B / Auto-Fix | Added model-backed patch generation with HTML/CSS file finding | Done | `npm run typecheck`; `npm test` 48/48; `git diff --check`; real ecommerce repo ranking returns `index.html` and `src/styles.css` as top targets before model patching |
+| `autofix-generic-pr-gates-2026-05-16` | Person B / Auto-Fix | Removed demo-specific default smoke checks | Done | `npm run typecheck`; focused Auto-Fix/verification/PR-gate tests; CSS patches now get generic syntax verification and PR gate refuses patches with no recorded verification checks |
 
 ## Gates
 
@@ -88,8 +89,8 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | Repo indexing | Out of scope | Pass locally |
 | Candidate ranking | Out of scope | Pass locally |
 | Diagnosis | Out of scope | Pass locally |
-| Patch generation | Out of scope | Pass locally; uses configured OpenAI coding model when available and falls back to deterministic scoped patching |
-| Temp clone verification | Out of scope | Pass locally |
+| Patch generation | Out of scope | Pass locally; uses configured OpenAI coding model when deterministic scoped patching cannot safely produce a change |
+| Temp clone verification | Out of scope | Pass locally; PR gate requires at least one recorded verification check |
 | GitHub PR | Out of scope | Pass; hosted credentialed PR opened at https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 |
 
 ## Tracker Rules
