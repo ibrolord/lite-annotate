@@ -67,7 +67,23 @@ function hasVisualLayoutSignal(report: ReportLike): boolean {
     .join('\n');
   const visualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i;
   const strongVisualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|color|colour|background/i;
+  if (hasDisplayedValueSignal(report)) return false;
   return strongVisualSignal.test(userIntentText) || visualSignal.test(reportText(report));
+}
+
+function hasDisplayedValueSignal(report: ReportLike): boolean {
+  const userIntentText = [
+    report.title,
+    report.description,
+    report.annotation?.target,
+    report.annotation?.description,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (/wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|color|colour|background/i.test(userIntentText)) {
+    return false;
+  }
+  return /\b(stray|extra|wrong|incorrect|unexpected|unwanted|shows?|display(?:ed|ing)?|count|badge|number|zero)\b|(?:^|[^A-Za-z0-9])0(?:[^A-Za-z0-9]|$)/i.test(userIntentText);
 }
 
 function requestedColor(report: ReportLike): string | null {
@@ -173,12 +189,14 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   const property = referencedProperty(report);
   const missingProperty = hasMissingPropertyError(report);
   const visualLayout = !missingProperty && hasVisualLayoutSignal(report);
+  const displayedValue = !missingProperty && !visualLayout && hasDisplayedValueSignal(report);
   const color = requestedColor(report);
   const propertyRead = property
     ? firstMeaningfulLine(top.file.content, new RegExp(`\\.${property}\\b`))
     : null;
   const lookupLine = firstMeaningfulLine(top.file.content, /\b(get|find|load|fetch)[A-Za-z0-9_$]*\s*\(/);
   const styleLine = firstMeaningfulLine(top.file.content, /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap|background|color|\.button|class=|<h[1-6]\b/i);
+  const domUpdateLine = firstMeaningfulLine(top.file.content, /\b(getElementById|querySelector|textContent|innerText|innerHTML|hidden|classList|setAttribute)\b/);
   const guardedCurrentCode = property
     ? hasGuardBeforePropertyRead(top.file.content, 'user', property) || hasGuardBeforePropertyRead(top.file.content, 'customer', property)
     : false;
@@ -190,6 +208,7 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   if (propertyRead) evidence.push(`Code: ${top.path} reads ${propertyRead}`);
   if (lookupLine) evidence.push(`Code: ${top.path} depends on lookup ${lookupLine}`);
   if (styleLine) evidence.push(`Code: ${top.path} includes visual target ${styleLine}`);
+  if (domUpdateLine) evidence.push(`Code: ${top.path} updates displayed UI state ${domUpdateLine}`);
   if (report.route) evidence.push(`Route: ${report.route}`);
 
   const targetFiles = visualLayout
@@ -204,18 +223,21 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   const hasVisualStyleTarget = visualLayout && targetFiles.some((path) => /\.(?:s?css)$/i.test(path));
 
   const confidence = clampConfidence(
-    (visualLayout ? 0.52 : 0.45) +
+    (visualLayout ? 0.52 : displayedValue ? 0.56 : 0.45) +
       (top.score >= 300 ? 0.15 : 0) +
       (missingProperty ? 0.15 : 0) +
       (propertyRead ? 0.12 : 0) +
       (visualLayout && styleLine ? 0.11 : 0) +
+      (displayedValue && domUpdateLine ? 0.16 : 0) +
       (color && hasVisualStyleTarget ? 0.21 : 0)
   );
 
   const rootCause = property && propertyRead && guardedCurrentCode
     ? `${top.path} is the stack-frame source for the reported missing-record crash, and the current repo already guards the missing record before reading ${property}.`
-    : property && propertyRead
-      ? `${top.path} dereferences a lookup result's ${property} property before confirming the record exists.`
+      : property && propertyRead
+        ? `${top.path} dereferences a lookup result's ${property} property before confirming the record exists.`
+        : displayedValue
+          ? `${top.path} owns the annotated displayed value and updates the related DOM state for the reported count/text.`
       : visualLayout
         ? targetFiles.length > 0 && !targetFiles.includes(top.path)
           ? `${targetFiles.join(', ')} is the stylesheet target for the visual report. ${top.path} came from a noisy stack trace and is kept as context.`
@@ -232,6 +254,8 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
       ? `Verify the existing missing-record guard before reading ${property}; patch only if the guard is absent.`
       : property
         ? `Add a missing-record guard or fallback before reading ${property}.`
+        : displayedValue
+          ? 'Make the smallest UI state update that removes the incorrect displayed value without changing unrelated layout.'
         : visualLayout
           ? color
             ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`

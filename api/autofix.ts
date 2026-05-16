@@ -107,6 +107,35 @@ function trustedReportRepo(
   return embeddedRepo;
 }
 
+function pipelineForModifiedPrFiles(pipeline: PersonBPipelineResult): {
+  pipeline: PersonBPipelineResult;
+  skippedFiles: string[];
+} {
+  if (!pipeline.patch.ok || !pipeline.verification?.ok) return { pipeline, skippedFiles: [] };
+
+  const modifiedFiles = new Set(pipeline.verification.modifiedFiles);
+  const prFiles = pipeline.patch.files.filter((file) => modifiedFiles.has(file.path));
+  const skippedFiles = pipeline.patch.files
+    .map((file) => file.path)
+    .filter((path) => !modifiedFiles.has(path));
+
+  if (skippedFiles.length === 0) return { pipeline, skippedFiles };
+  return {
+    pipeline: {
+      ...pipeline,
+      diagnosis: {
+        ...pipeline.diagnosis,
+        targetFiles: pipeline.diagnosis.targetFiles.filter((file) => modifiedFiles.has(file)),
+      },
+      patch: {
+        ...pipeline.patch,
+        files: prFiles,
+      },
+    },
+    skippedFiles,
+  };
+}
+
 export async function runAutofix(
   bugId: string,
   report: PersonBPipelineInput['report'],
@@ -195,10 +224,29 @@ export async function runAutofix(
     label: 'PR gate',
     status: 'running',
     detail: githubRepo,
+    logs: [
+      `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
+      `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+    ],
     at: new Date().toISOString(),
   });
+  const { pipeline: prPipeline, skippedFiles } = pipelineForModifiedPrFiles(pipeline);
+  if (skippedFiles.length > 0) {
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'running',
+      detail: githubRepo,
+      logs: [
+        `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
+        `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+        `skipping no-op patch files: ${skippedFiles.join(', ')}`,
+      ],
+      at: new Date().toISOString(),
+    });
+  }
   const prResult = await openVerifiedPR({
-    pipeline,
+    pipeline: prPipeline,
     report: {
       id: bugId,
       title: typeof report.title === 'string' ? report.title : undefined,
@@ -219,6 +267,12 @@ export async function runAutofix(
       label: 'PR gate',
       status: 'skipped',
       detail: prResult.error,
+      logs: [
+        `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
+        `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+        ...(skippedFiles.length ? [`skipped no-op patch files: ${skippedFiles.join(', ')}`] : []),
+        prResult.error ?? 'PR gate skipped.',
+      ],
       at: new Date().toISOString(),
     });
     return { status: 'pr_skipped', pipeline, pr: null, prError: prResult.error };
@@ -230,6 +284,12 @@ export async function runAutofix(
     label: 'PR gate',
     status: 'completed',
     detail: prResult.pr?.pr_url,
+    logs: [
+      `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
+      `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+      ...(skippedFiles.length ? [`skipped no-op patch files: ${skippedFiles.join(', ')}`] : []),
+      `opened PR: ${prResult.pr?.pr_url ?? 'unknown'}`,
+    ],
     at: new Date().toISOString(),
   });
   return { status: 'pr_opened', pipeline, pr: prResult.pr };

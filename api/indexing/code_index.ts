@@ -366,11 +366,27 @@ function isVisualLayoutReport(report: ReportLike): boolean {
     .join('\n');
   const visualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i;
   const strongVisualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|color|colour|background/i;
+  if (isDisplayedValueReport(report)) return false;
   if (strongVisualSignal.test(userIntentText)) return true;
 
   const text = reportText(report);
   if (/cannot read properties? of undefined|cannot read property|typeerror|referenceerror/i.test(text)) return false;
   return visualSignal.test(text);
+}
+
+function isDisplayedValueReport(report: ReportLike): boolean {
+  const userIntentText = [
+    report.title,
+    report.description,
+    report.annotation?.target,
+    report.annotation?.description,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (/wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|color|colour|background/i.test(userIntentText)) {
+    return false;
+  }
+  return /\b(stray|extra|wrong|incorrect|unexpected|unwanted|shows?|display(?:ed|ing)?|count|badge|number|zero)\b|(?:^|[^A-Za-z0-9])0(?:[^A-Za-z0-9]|$)/i.test(userIntentText);
 }
 
 function isStylePath(path: string): boolean {
@@ -379,6 +395,10 @@ function isStylePath(path: string): boolean {
 
 function isMarkupPath(path: string): boolean {
   return /\.(?:html|jsx|tsx)$/i.test(path);
+}
+
+function isScriptPath(path: string): boolean {
+  return /\.(?:[cm]?[jt]sx?)$/i.test(path);
 }
 
 function addScore(
@@ -398,6 +418,7 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
   const selectors = selectorTokens(report);
   const phrases = annotationPhrases(report);
   const visualLayoutReport = isVisualLayoutReport(report);
+  const displayedValueReport = isDisplayedValueReport(report);
 
   return index.files
     .filter((file) => !isTestPath(file.path))
@@ -463,6 +484,19 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
         }
         if (file.functions.some((name) => name.toLowerCase().includes(token))) {
           addScore(state, 35, `function matches report token "${token}"`);
+        }
+        if (isScriptPath(file.path) && file.symbolReferences.some((name) => name.toLowerCase().includes(token))) {
+          addScore(state, 140, `script symbol references report token "${token}"`);
+        }
+      }
+
+      if (displayedValueReport && isScriptPath(file.path) && /\b(getElementById|querySelector|textContent|innerText|innerHTML|hidden|classList|setAttribute)\b/.test(file.content)) {
+        addScore(state, 1700, 'script updates DOM state for reported displayed value');
+        if (tokens.size > 0 && file.symbolReferences.some((name) => {
+          const lowerName = name.toLowerCase();
+          return [...tokens].some((token) => token.length > 2 && lowerName.includes(token));
+        })) {
+          addScore(state, 1600, 'script owns symbol related to reported displayed value');
         }
       }
 

@@ -26,6 +26,7 @@ export interface AutofixStageEvent {
   label: string;
   status: AutofixStageStatus;
   detail?: string;
+  logs?: string[];
   at: string;
 }
 
@@ -59,10 +60,25 @@ async function reportStage(
   key: AutofixStageKey,
   label: string,
   status: AutofixStageStatus,
-  detail?: string
+  detail?: string,
+  logs?: string[]
 ): Promise<void> {
   if (!input.onStage) return;
-  await input.onStage({ key, label, status, detail, at: new Date().toISOString() });
+  await input.onStage({ key, label, status, detail, logs, at: new Date().toISOString() });
+}
+
+function verificationLogs(verification: PatchVerificationResult): string[] {
+  const logs = [
+    `modified files: ${verification.modifiedFiles.join(', ') || 'none'}`,
+    ...verification.commands.map((command) => {
+      const parts = [`${command.name}: ${command.ok ? 'pass' : 'fail'}`];
+      if (command.stdout.trim()) parts.push(`stdout: ${command.stdout.trim()}`);
+      if (command.stderr.trim()) parts.push(`stderr: ${command.stderr.trim()}`);
+      return parts.join('\n');
+    }),
+  ];
+  if (verification.error) logs.push(`error: ${verification.error}`);
+  return logs;
 }
 
 export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<PersonBPipelineResult> {
@@ -154,7 +170,10 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
     'patch',
     'Generate scoped patch',
     patch.ok ? 'completed' : 'skipped',
-    patch.ok ? patch.files.map((file) => file.path).join(', ') : patch.error
+    patch.ok ? patch.files.map((file) => file.path).join(', ') : patch.error,
+    patch.ok
+      ? [`patch source: ${patch.source ?? 'deterministic'}`, `files: ${patch.files.map((file) => file.path).join(', ') || 'none'}`]
+      : [patch.error ?? 'No patch generated.']
   );
 
   await reportStage(input, 'verification', 'Verify patch', patch.ok ? 'running' : 'skipped');
@@ -173,7 +192,8 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
       'verification',
       'Verify patch',
       verification.ok ? 'completed' : 'failed',
-      verification.commands.map((command) => `${command.name}: ${command.ok ? 'pass' : 'fail'}`).join(', ') || 'generic verification'
+      verification.commands.map((command) => `${command.name}: ${command.ok ? 'pass' : 'fail'}`).join(', ') || 'generic verification',
+      verificationLogs(verification)
     );
   }
 

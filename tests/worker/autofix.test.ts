@@ -72,13 +72,21 @@ ${guard}  return \`Welcome back, \${customer.name}. Your \${customer.tier} credi
     join(root, 'src', 'app.js'),
     `import { formatLoyaltyGreeting } from './customer.js';
 
+const navCartCount = document.getElementById('nav-cart-count');
+const cart = new Map();
+
+function renderCart() {
+  const itemCount = Array.from(cart.values()).reduce((total, quantity) => total + quantity, 0);
+  navCartCount.textContent = String(itemCount);
+}
+
 async function loadLoyaltyProfile() {
   const response = await fetch('/api/customers/vip-404');
   if (!response.ok) console.warn('[cedar-and-sail] loyalty profile lookup returned', response.status);
   return formatLoyaltyGreeting('vip-404');
 }
 
-export { loadLoyaltyProfile };
+export { loadLoyaltyProfile, renderCart };
 `
   );
   writeFileSync(
@@ -267,6 +275,127 @@ test('runAutofix skips PR with a clear no-change reason when patch content alrea
     assert.equal(result.pipeline.verification?.ok, true);
     assert.deepEqual(result.pipeline.verification?.modifiedFiles, []);
     assert.ok(prStages.some((detail) => /No repository changes were produced/.test(detail)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix opens PR with only verified modified files when model returns a partial no-op patch', async () => {
+  const root = makeCommerceRepo();
+  try {
+    let prFiles: string[] = [];
+    const prStageLogs: string[] = [];
+    const result = await runAutofix('bug_checkout_partial_noop', {
+      title: 'Checkout button should be blue',
+      description: 'On /checkout, the checkout CTA style and supporting script should be updated.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
+      route: '/checkout',
+      annotation: {
+        target: 'form#checkout-form:Email Name Address Place demo order',
+        selector: 'form#checkout-form',
+        route: '/checkout',
+      },
+      console: [],
+      network: [],
+      session: [{ type: 'click', target: 'button:Report a bug with technical context' }],
+    }, {
+      workspacePath: root,
+      githubToken: 'ghs_test',
+      githubRepo: 'ibrolord/lite-annotate-demo',
+      runPackageScripts: false,
+      codePatchGenerator: async ({ candidates }) => {
+        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
+        const app = candidates.find((candidate) => candidate.path === 'src/app.js');
+        assert.ok(styles);
+        assert.ok(app);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          files: [
+            { path: 'src/styles.css', content: styles.file.content },
+            { path: 'src/app.js', content: `${app.file.content}\nexport const __annotateAutofixMarker = true;\n` },
+          ],
+        };
+      },
+      createPR: async (input) => {
+        prFiles = input.payload.files.map((file) => file.path);
+        return {
+          pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/9',
+          branch: input.payload.branch,
+          files: prFiles,
+          write_mode: 'direct_files',
+        };
+      },
+      onStage: async (stage) => {
+        if (stage.key === 'pr' && stage.logs) prStageLogs.push(...stage.logs);
+      },
+    });
+
+    assert.equal(result.status, 'pr_opened');
+    assert.deepEqual(prFiles, ['src/app.js']);
+    assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css', 'src/app.js']);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/app.js']);
+    assert.ok(prStageLogs.some((line) => /skipped no-op patch files: src\/styles\.css/.test(line)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix targets the DOM state owner for a stray cart count report', async () => {
+  const root = makeCommerceRepo();
+  try {
+    const result = await runAutofix('bug_stray_cart_zero', {
+      title: 'Theres a stray 0 here',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/checkout/confirmation',
+      route: '/checkout/confirmation',
+      annotation: {
+        target: 'a:Cart 0',
+        selector: 'body > header.site-header > nav.main-nav > a',
+        route: '/checkout/confirmation',
+      },
+      console: [{
+        level: 'warn',
+        message: '[cedar-and-sail] checkout redirect target is not registered /checkout/confirmation',
+      }],
+      network: [{ method: 'GET', url: '/api/checkout/quote', status: 200, failed: false }],
+      session: [
+        { type: 'click', target: 'button:Report a bug with technical context' },
+        { type: 'click', target: 'a:Cart 0' },
+      ],
+    }, {
+      workspacePath: root,
+      githubToken: undefined,
+      githubRepo: undefined,
+      runPackageScripts: false,
+      codePatchGenerator: async ({ candidates, diagnosis }) => {
+        const app = candidates.find((candidate) => candidate.path === 'src/app.js');
+        assert.ok(app);
+        assert.equal(candidates[0]?.path, 'src/app.js');
+        assert.deepEqual(diagnosis.targetFiles, ['src/app.js']);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          summary: 'Hide the cart count when it is zero.',
+          files: [{
+            path: 'src/app.js',
+            content: app.file.content.replace(
+              '  navCartCount.textContent = String(itemCount);',
+              "  navCartCount.textContent = itemCount === 0 ? '' : String(itemCount);"
+            ),
+          }],
+        };
+      },
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.candidates[0]?.path, 'src/app.js');
+    assert.deepEqual(result.pipeline.diagnosis.targetFiles, ['src/app.js']);
+    assert.equal(result.pipeline.diagnosis.shouldPatch, true);
+    assert.match(result.pipeline.diagnosis.rootCause, /displayed value/);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/app.js']);
+    assert.ok(result.pipeline.verification?.commands.some((command) => command.name === 'node --check src/app.js'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

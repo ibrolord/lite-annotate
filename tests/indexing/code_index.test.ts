@@ -118,6 +118,55 @@ test('rankCandidateFiles uses pinned visual evidence to rank ecommerce HTML and 
   }
 });
 
+test('rankCandidateFiles routes displayed value reports to DOM-owning scripts before styles', () => {
+  const root = makeFixtureRepo();
+  try {
+    writeFileSync(
+      join(root, 'index.html'),
+      `<header class="site-header">
+  <nav class="main-nav">
+    <a href="/cart">Cart <span id="nav-cart-count">0</span></a>
+  </nav>
+</header>
+<main data-view="checkout">Confirmation</main>
+`
+    );
+    writeFileSync(
+      join(root, 'src', 'app.js'),
+      `const cart = new Map();
+const navCartCount = document.getElementById('nav-cart-count');
+
+export function renderCart() {
+  const itemCount = Array.from(cart.values()).reduce((total, quantity) => total + quantity, 0);
+  navCartCount.textContent = String(itemCount);
+}
+`
+    );
+
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'Theres a stray 0 here',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/checkout/confirmation',
+      route: '/checkout/confirmation',
+      annotation: {
+        target: 'a:Cart 0',
+        selector: 'body > header.site-header > nav.main-nav > a',
+        route: '/checkout/confirmation',
+      },
+      session: [
+        { type: 'click', target: 'button:Report a bug with technical context' },
+        { type: 'click', target: 'a:Cart 0' },
+      ],
+    });
+
+    assert.equal(ranked[0]?.path, 'src/app.js');
+    assert.ok(ranked[0]?.reasons.some((reason) => /displayed value|script symbol/.test(reason)));
+    assert.notEqual(ranked[0]?.path, 'src/styles.css');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('rankCandidateFiles ranks src/users.js first for the pinned demo report', () => {
   const root = makeFixtureRepo();
   try {

@@ -955,6 +955,21 @@ function renderReportHtml(
     .autofix-step strong { display: block; font-size: 13px; line-height: 1.35; }
     .autofix-step p { margin-top: 2px; font-size: 12px; }
     .autofix-step em { color: var(--muted); font-style: normal; font-size: 12px; font-weight: 760; text-transform: uppercase; }
+    .autofix-stage-logs { margin-top: 7px; }
+    .autofix-stage-logs summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 760; }
+    .autofix-stage-logs pre {
+      margin-top: 6px;
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 8px;
+      background: var(--panel);
+      font-size: 12px;
+      line-height: 1.45;
+    }
     .autofix-step[data-status="completed"] .autofix-dot { background: var(--success); border-color: var(--success); }
     .autofix-step[data-status="running"] .autofix-dot { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
     .autofix-step[data-status="failed"] .autofix-dot { background: var(--danger); border-color: var(--danger); }
@@ -1261,9 +1276,25 @@ function renderReportHtml(
           const title = item.querySelector('strong');
           const detail = item.querySelector('p');
           const status = item.querySelector('em');
+          let logs = item.querySelector('[data-stage-logs] pre');
           if (title && typeof stage.label === 'string') title.textContent = stage.label;
           if (detail) detail.textContent = typeof stage.detail === 'string' ? stage.detail : '';
           if (status) status.textContent = item.dataset.status;
+          if (Array.isArray(stage.logs)) {
+            const logText = stage.logs.filter((line) => typeof line === 'string' && line.trim()).join('\\n\\n');
+            if (logText && !logs) {
+              const body = item.querySelector('div');
+              const details = document.createElement('details');
+              details.className = 'autofix-stage-logs';
+              details.dataset.stageLogs = '';
+              const summary = document.createElement('summary');
+              summary.textContent = 'Stage logs';
+              logs = document.createElement('pre');
+              details.append(summary, logs);
+              body && body.appendChild(details);
+            }
+            if (logs) logs.textContent = logText;
+          }
         });
         const active = stages.find((stage) => stage.status === 'running')
           || stages.find((stage) => stage.status === 'failed')
@@ -1730,7 +1761,11 @@ function renderAutofixProgressHtml(autofix: unknown): string {
   const items = displayedStages.map((stage) => (
     `<li class="autofix-step" data-stage="${escapeHtml(stage.key)}" data-status="${escapeHtml(stage.status)}">
       <span class="autofix-dot" aria-hidden="true"></span>
-      <div><strong>${escapeHtml(stage.label)}</strong><p>${escapeHtml(stage.detail ?? '')}</p></div>
+      <div>
+        <strong>${escapeHtml(stage.label)}</strong>
+        <p>${escapeHtml(stage.detail ?? '')}</p>
+        ${renderAutofixStageLogsHtml(stage)}
+      </div>
       <em>${escapeHtml(stage.status)}</em>
     </li>`
   )).join('');
@@ -1742,6 +1777,17 @@ function renderAutofixProgressHtml(autofix: unknown): string {
     </div>
     <ol class="autofix-steps" data-autofix-steps>${items}</ol>
   </div>`;
+}
+
+function renderAutofixStageLogsHtml(stage: AutofixStageEvent): string {
+  const logs = Array.isArray(stage.logs)
+    ? stage.logs.filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+    : [];
+  if (logs.length === 0) return '';
+  return `<details class="autofix-stage-logs" data-stage-logs>
+    <summary>Stage logs</summary>
+    <pre>${escapeHtml(logs.join('\n\n'))}</pre>
+  </details>`;
 }
 
 function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {

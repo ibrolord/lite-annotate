@@ -91,37 +91,47 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
   const app = createApp({
     store,
     memory: createMemoryAdapter(),
-    autofixRunner: async (reportId, report, options) => ({
-      dryRunCalls: dryRunCalls.push(options.dryRun),
-      status: 'verified_no_pr',
-      pr: null,
-      pipeline: {
-        candidates: [{ path: 'src/users.js', score: 900, reasons: ['route match'] }],
-        diagnosis: {
-          type: 'bug',
-          severity: 'medium',
-          rootCause: 'src/users.js dereferences user.name when the user is missing.',
-          evidence: ["Console: Cannot read properties of undefined reading 'name'"],
-          targetFiles: ['src/users.js'],
-          fixStrategy: 'Add a missing-user fallback.',
-          confidence: 0.82,
-          shouldPatch: true,
+    autofixRunner: async (reportId, report, options) => {
+      dryRunCalls.push(options.dryRun);
+      await options.onStage?.({
+        key: 'verification',
+        label: 'Verify patch',
+        status: 'completed',
+        detail: 'node --check src/users.js: pass',
+        logs: ['node --check src/users.js: pass'],
+        at: new Date().toISOString(),
+      });
+      return {
+        status: 'verified_no_pr',
+        pr: null,
+        pipeline: {
+          candidates: [{ path: 'src/users.js', score: 900, reasons: ['route match'] }],
+          diagnosis: {
+            type: 'bug',
+            severity: 'medium',
+            rootCause: 'src/users.js dereferences user.name when the user is missing.',
+            evidence: ["Console: Cannot read properties of undefined reading 'name'"],
+            targetFiles: ['src/users.js'],
+            fixStrategy: 'Add a missing-user fallback.',
+            confidence: 0.82,
+            shouldPatch: true,
+          },
+          patch: {
+            ok: true,
+            files: [{
+              path: 'src/users.js',
+              content: 'THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE '.repeat(400),
+            }],
+          },
+          verification: {
+            ok: true,
+            modifiedFiles: ['src/users.js'],
+            commands: [{ name: 'node --check src/users.js', ok: true, stdout: '', stderr: '' }],
+          },
         },
-        patch: {
-          ok: true,
-          files: [{
-            path: 'src/users.js',
-            content: 'THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE '.repeat(400),
-          }],
-        },
-        verification: {
-          ok: true,
-          modifiedFiles: ['src/users.js'],
-          commands: [{ name: 'node --check src/users.js', ok: true, stdout: '', stderr: '' }],
-        },
-      },
-      meta: { reportId, title: report.title },
-    }),
+        meta: { reportId, title: report.title },
+      };
+    },
   });
 
   try {
@@ -170,6 +180,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
       stage.key === 'request' && stage.status === 'completed'
     )));
+    assert.ok(autofixBody.autofix.stages.some((stage: { key: string; logs?: string[] }) => (
+      stage.key === 'verification' && stage.logs?.some((line) => /node --check src\/users\.js/.test(line))
+    )));
     assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
       stage.key === 'memory' && stage.status === 'completed'
     )));
@@ -209,6 +222,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /Verified patch ready/);
     assert.match(viewAfterHtml, /verified_no_pr/);
     assert.match(viewAfterHtml, /src\/users\.js/);
+    assert.match(viewAfterHtml, /Stage logs/);
+    assert.match(viewAfterHtml, /node --check src\/users\.js/);
     assert.match(viewAfterHtml, new RegExp(`data-analysis-src="/reports/${postBody.reportId}/autofix"`));
     assert.doesNotMatch(viewAfterHtml, /THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE/);
     assert.match(viewAfterHtml, /Memory Impact/);
