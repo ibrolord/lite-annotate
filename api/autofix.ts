@@ -83,12 +83,20 @@ function envOptions(): AutofixOptions {
   };
 }
 
+function reportRepo(report: PersonBPipelineInput['report']): string | undefined {
+  return typeof report.repo === 'string' && report.repo.trim() ? report.repo.trim() : undefined;
+}
+
 export async function runAutofix(
   bugId: string,
   report: PersonBPipelineInput['report'],
   options: AutofixOptions = envOptions()
 ): Promise<AutofixResult> {
   const resolvedOptions = { ...envOptions(), ...options };
+  const embeddedRepo = reportRepo(report);
+  if (!resolvedOptions.workspacePath && !resolvedOptions.repo && embeddedRepo) {
+    resolvedOptions.repo = embeddedRepo;
+  }
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
   const pipeline = await runPersonBPipeline({

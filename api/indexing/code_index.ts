@@ -47,6 +47,7 @@ export interface CodeIndex {
 export interface ReportLike {
   title?: string;
   description?: string;
+  repo?: string;
   url?: string;
   route?: string;
   console?: Array<{ level?: string; message?: string; msg?: string }>;

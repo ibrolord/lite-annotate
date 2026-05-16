@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,16 @@ function formatUserGreeting(id) {
 module.exports = { formatUserGreeting };
 `
   );
+  return root;
+}
+
+function makeGitRepo(): string {
+  const root = makeRepo();
+  execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: root, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'seed'], { cwd: root, stdio: 'ignore' });
   return root;
 }
 
@@ -139,6 +150,27 @@ test('runAutofix dry run verifies but does not call GitHub PR creation', async (
     assert.equal(calls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix falls back to the report repo when env repo is not configured', async () => {
+  const origin = makeGitRepo();
+  const workspaceRoot = mkdtempSync(join(tmpdir(), 'lite-annotate-autofix-workspace-'));
+  try {
+    const result = await runAutofix('bug_123', { ...report, repo: origin }, {
+      workspaceRoot,
+      githubToken: undefined,
+      githubRepo: undefined,
+      skipPR: true,
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.candidates[0]?.path, 'src/users.js');
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.notEqual(result.pipeline.workspacePath, origin);
+  } finally {
+    rmSync(origin, { recursive: true, force: true });
+    rmSync(workspaceRoot, { recursive: true, force: true });
   }
 });
 
