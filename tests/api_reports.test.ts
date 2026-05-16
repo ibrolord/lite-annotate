@@ -85,10 +85,12 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
   process.env.MEMORY_DIR = join(root, 'memory');
   process.env.MEMORY_PROVIDER = 'github-markdown';
   const store = new ReportStore(join(root, 'reports'));
+  const dryRunCalls: boolean[] = [];
   const app = createApp({
     store,
     memory: createMemoryAdapter(),
-    autofixRunner: async (reportId, report) => ({
+    autofixRunner: async (reportId, report, options) => ({
+      dryRunCalls: dryRunCalls.push(options.dryRun),
       status: 'verified_no_pr',
       pr: null,
       pipeline: {
@@ -126,6 +128,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(viewBefore.status, 200);
     const viewBeforeHtml = await viewBefore.text();
     assert.match(viewBeforeHtml, /Run analysis/);
+    assert.match(viewBeforeHtml, /Dry run analysis/);
     assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/autofix`));
     assert.doesNotMatch(viewBeforeHtml, /Person B/);
     assert.match(viewBeforeHtml, /Cold Agent vs Memory Agent/);
@@ -133,8 +136,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Memory agent/);
     assert.match(viewBeforeHtml, /Memory Receipts/);
 
-    const autofix = await app.request(`/reports/${postBody.reportId}/autofix`, { method: 'POST' });
+    const autofix = await app.request(`/reports/${postBody.reportId}/autofix?dryRun=1`, { method: 'POST' });
     assert.equal(autofix.status, 200);
+    assert.deepEqual(dryRunCalls, [true]);
     const autofixBody = await autofix.json();
     assert.equal(autofixBody.reportId, postBody.reportId);
     assert.equal(autofixBody.autofix.status, 'verified_no_pr');

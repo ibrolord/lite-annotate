@@ -13,6 +13,7 @@ export interface AutofixOptions {
   githubToken?: string;
   githubRepo?: string;
   createPR?: CreatePRFunction;
+  skipPR?: boolean;
 }
 
 export interface AutofixResult {
@@ -56,14 +57,15 @@ export async function runAutofix(
   report: PersonBPipelineInput['report'],
   options: AutofixOptions = envOptions()
 ): Promise<AutofixResult> {
+  const resolvedOptions = { ...envOptions(), ...options };
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
   const pipeline = runPersonBPipeline({
     report,
-    workspacePath: options.workspacePath,
-    repo: options.repo,
-    workspaceRoot: options.workspaceRoot,
-    branch: options.branch,
+    workspacePath: resolvedOptions.workspacePath,
+    repo: resolvedOptions.repo,
+    workspaceRoot: resolvedOptions.workspaceRoot,
+    branch: resolvedOptions.branch,
     smokeCommands: defaultSmokeCommands(),
   });
 
@@ -76,8 +78,13 @@ export async function runAutofix(
     return { status: 'diagnosis_only', pipeline, pr: null };
   }
 
-  const githubRepo = options.githubRepo || options.repo;
-  if (!options.githubToken || !githubRepo) {
+  if (resolvedOptions.skipPR) {
+    console.log('[autofix] verified locally; dry run requested, skipping PR');
+    return { status: 'verified_no_pr', pipeline, pr: null };
+  }
+
+  const githubRepo = resolvedOptions.githubRepo || resolvedOptions.repo;
+  if (!resolvedOptions.githubToken || !githubRepo) {
     console.log('[autofix] verified locally; no GitHub credentials configured, skipping PR');
     return { status: 'verified_no_pr', pipeline, pr: null };
   }
@@ -92,8 +99,8 @@ export async function runAutofix(
       route: typeof report.route === 'string' ? report.route : undefined,
     },
     repoUrl: repoUrl(githubRepo),
-    token: options.githubToken,
-    createPR: options.createPR,
+    token: resolvedOptions.githubToken,
+    createPR: resolvedOptions.createPR,
   });
 
   if (!prResult.ok) {

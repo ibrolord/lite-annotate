@@ -13,19 +13,25 @@ import type { LiteReport } from './report_contract.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 
+interface AutofixRunnerContext {
+  dryRun: boolean;
+}
+
 export function createApp(deps: {
   store?: ReportStore;
   memory?: MemoryAdapter;
-  autofixRunner?: (reportId: string, report: LiteReport) => Promise<unknown>;
+  autofixRunner?: (reportId: string, report: LiteReport, context: AutofixRunnerContext) => Promise<unknown>;
 } = {}) {
   const app = new Hono();
   const store = deps.store ?? new ReportStore();
   const memory = deps.memory ?? createMemoryAdapter();
-  const autofixRunner: (reportId: string, report: LiteReport) => Promise<unknown> =
+  const autofixRunner: (reportId: string, report: LiteReport, context: AutofixRunnerContext) => Promise<unknown> =
     deps.autofixRunner ??
-    (async (reportId, report) => {
+    (async (reportId, report, context) => {
       const { runAutofix } = await import('./autofix.js');
-      return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1]);
+      return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1], {
+        skipPR: context.dryRun,
+      });
     });
 
   app.use('*', cors());
@@ -160,7 +166,8 @@ export function createApp(deps: {
     if (!record) return c.json({ error: 'not_found' }, 404);
 
     try {
-      const result = await autofixRunner(record.report.id, record.report);
+      const dryRun = isTruthyFlag(c.req.query('dryRun'));
+      const result = await autofixRunner(record.report.id, record.report, { dryRun });
       const autofixSummary = summarizeAutofixResult(result);
       await memory.putDiagnosis(record.report.id, autofixSummary.diagnosis);
       await memory.putOutcome(record.report.id, {
@@ -391,6 +398,9 @@ function renderReportHtml(
   <p><a href="/reports/${encodeURIComponent(reportId)}">Normalized JSON</a> · <a href="/reports/${encodeURIComponent(reportId)}/handoff">Analysis handoff</a></p>
   <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
     <button type="submit">Run analysis</button>
+  </form>
+  <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
+    <button type="submit">Dry run analysis</button>
   </form>
   <h2>Normalized Report</h2>
   <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
@@ -728,6 +738,10 @@ function escapeHtml(value: string): string {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isTruthyFlag(value: string | undefined): boolean {
+  return value === '1' || value === 'true' || value === 'yes';
 }
 
 const directRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

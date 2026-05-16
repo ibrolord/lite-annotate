@@ -81,3 +81,27 @@ test('runAutofix opens PR through verified gate when GitHub credentials are conf
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runAutofix dry run verifies but does not call GitHub PR creation', async () => {
+  const root = makeRepo();
+  try {
+    let calls = 0;
+    const result = await runAutofix('bug_123', report, {
+      workspacePath: root,
+      githubToken: 'ghs_test',
+      githubRepo: 'ibrolord/lite-annotate-demo',
+      skipPR: true,
+      createPR: async () => {
+        calls += 1;
+        throw new Error('dry run should not create PR');
+      },
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.equal(result.pr, null);
+    assert.equal(calls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
