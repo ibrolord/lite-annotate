@@ -72,6 +72,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `report-repo-callback-retry-2026-05-16` | Person B / GStack Runner | Preferred report repo and retried runner callbacks | Done | Autofix uses report-scoped repo over hosted env defaults; runner persists failed results and retries Lite Annotate callbacks before marking callback failure |
 | `gstack-mode-stack-ranking-2026-05-16` | GStack Runner / Ranking | Preserved runner mode and stack-frame evidence | Done | `npm run typecheck`; `npm test` 45/45; callbacks keep review mode, code ranking reads console stack fields and prioritizes first stack frame |
 | `hosted-gstack-review-2026-05-16` | GStack Runner / Deploy | Ran authorized hosted GStack runner review | Done | Railway deployment `7a1e00bc-404a-4e94-8974-a03e476e7de4`; unauthenticated trigger returns 401; authorized job `gstack_84508758-0dbd-493d-aaf3-3867b6e31b69` returned `passed` and replaced the stale queued record |
+| `model-backed-autofix-2026-05-16` | Person B / Auto-Fix | Added model-backed patch generation with HTML/CSS file finding | Done | `npm run typecheck`; `npm test` 48/48; `git diff --check`; real ecommerce repo ranking returns `index.html` and `src/styles.css` as top targets before model patching |
 
 ## Gates
 
@@ -87,7 +88,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | Repo indexing | Out of scope | Pass locally |
 | Candidate ranking | Out of scope | Pass locally |
 | Diagnosis | Out of scope | Pass locally |
-| Patch generation | Out of scope | Pass locally |
+| Patch generation | Out of scope | Pass locally; uses configured OpenAI coding model when available and falls back to deterministic scoped patching |
 | Temp clone verification | Out of scope | Pass locally |
 | GitHub PR | Out of scope | Pass; hosted credentialed PR opened at https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 |
 

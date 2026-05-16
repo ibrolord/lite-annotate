@@ -1002,8 +1002,10 @@ function buildMemoryImpact(
     },
     impact: [
       `Matched prior memory: ${topMemory.title}.`,
-      'Supports the same failure pattern before patching: profile code reads a missing user.',
-      'Fix strategy cue: guard missing user before reading name and return a fallback.',
+      'Supports comparison against a prior report before patching.',
+      topMemory.excerpt
+        ? `Reusable evidence cue: ${topMemory.excerpt.slice(0, 180)}${topMemory.excerpt.length > 180 ? '...' : ''}`
+        : 'Reusable evidence cue: inspect the prior diagnosis and verification outcome before changing code.',
     ],
     outcomeMemory,
   };
@@ -1033,7 +1035,7 @@ function buildAgentComparison(memoryImpact: MemoryImpactSummary, autofix: unknow
       ],
       limitation: 'No memory of whether this product has seen the same failure pattern before.',
       outcome: analyzed
-        ? `Can reach ${targetFile}, but must rediscover the missing-user failure pattern from scratch.`
+        ? `Can reach ${targetFile}, but must rediscover the failure pattern from scratch.`
         : 'Likely needs a full repo scan before it can propose a confident fix.',
     },
     memory: {
@@ -1043,7 +1045,7 @@ function buildAgentComparison(memoryImpact: MemoryImpactSummary, autofix: unknow
         memoryImpact.topMemory
           ? `Start from prior memory: ${memoryImpact.topMemory.title}.`
           : 'Store this report as the first memory for the pattern.',
-        analyzed ? `Use code and verification receipts to close the loop on ${targetFile}.` : 'Carry prior fix strategy into the analysis handoff.',
+        analyzed ? `Use code and verification receipts to close the loop on ${targetFile}.` : 'Carry prior evidence into the analysis handoff.',
       ],
       advantage: memoryImpact.topMemory
         ? 'Starts from prior diagnosis and fix strategy instead of a cold repo scan.'

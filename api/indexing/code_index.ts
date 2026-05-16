@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, sep } from 'node:path';
 
-const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx']);
+const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.html', '.css', '.scss']);
 const IGNORED_DIRS = new Set([
   '.git',
   '.next',
@@ -26,7 +26,7 @@ const IGNORED_FILE_NAMES = new Set([
 
 export interface IndexedCodeFile {
   path: string;
-  language: 'javascript' | 'typescript';
+  language: 'javascript' | 'typescript' | 'html' | 'css' | 'scss';
   imports: string[];
   exports: string[];
   functions: string[];
@@ -50,6 +50,14 @@ export interface ReportLike {
   description?: string;
   url?: string;
   route?: string;
+  annotation?: {
+    target?: string;
+    selector?: string;
+    route?: string;
+    description?: string;
+    selectedElement?: string;
+    activeTarget?: string;
+  };
   console?: Array<{ level?: string; message?: string; msg?: string; stack?: string }>;
   consoleLogs?: Array<{ level?: string; message?: string; msg?: string; stack?: string }>;
   network?: Array<{ method?: string; url?: string; status?: number; failed?: boolean }>;
@@ -180,7 +188,12 @@ function extractSymbolReferences(content: string): string[] {
 }
 
 function languageFor(path: string): IndexedCodeFile['language'] {
-  return extname(path).includes('ts') ? 'typescript' : 'javascript';
+  const ext = extname(path).toLowerCase();
+  if (ext === '.ts' || ext === '.tsx') return 'typescript';
+  if (ext === '.html') return 'html';
+  if (ext === '.css') return 'css';
+  if (ext === '.scss') return 'scss';
+  return 'javascript';
 }
 
 function isTestPath(path: string): boolean {
@@ -247,6 +260,14 @@ export function buildCodeIndex(root: string): CodeIndex {
 }
 
 function reportText(report: ReportLike): string {
+  const annotationText = [
+    report.annotation?.target,
+    report.annotation?.selector,
+    report.annotation?.route,
+    report.annotation?.description,
+    report.annotation?.selectedElement,
+    report.annotation?.activeTarget,
+  ].filter(Boolean).join('\n');
   const consoleEvents = [...(report.console ?? []), ...(report.consoleLogs ?? [])]
     .map((entry) => `${entry.level ?? ''} ${entry.message ?? entry.msg ?? ''}\n${entry.stack ?? ''}`)
     .join('\n');
@@ -262,6 +283,7 @@ function reportText(report: ReportLike): string {
     report.description,
     report.url,
     report.route,
+    annotationText,
     consoleEvents,
     networkEvents,
     sessionEvents,
@@ -299,13 +321,48 @@ function stackTracePaths(report: ReportLike): string[] {
   const text = reportText(report);
   const urlPaths = extractAll(
     text,
-    /https?:\/\/[^)\s]+\/((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g
+    /https?:\/\/[^)\s]+\/((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.(?:[cm]?[jt]sx?|html|s?css))(?::\d+)?/g
   );
   const relativePaths = extractAll(
     text,
-    /(?:^|[^A-Za-z0-9_./-])((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g
+    /(?:^|[^A-Za-z0-9_./-])((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.(?:[cm]?[jt]sx?|html|s?css))(?::\d+)?/g
   );
   return orderedUnique([...urlPaths, ...relativePaths]);
+}
+
+function selectorTokens(report: ReportLike): string[] {
+  const raw = [
+    report.annotation?.selector,
+    report.annotation?.target,
+    ...(report.session ?? []).map((entry) => entry.target),
+  ].filter(Boolean).join('\n');
+  const cssTokens = extractAll(raw, /[.#]([A-Za-z0-9_-]+)/g);
+  const tagTokens = extractAll(raw, /\b(h[1-6]|button|a|input|select|textarea|main|section|article|nav|header|footer|div|span|p|img)\b/gi)
+    .map((token) => token.toLowerCase());
+  return unique([...cssTokens, ...tagTokens].filter((token) => token.length > 1));
+}
+
+function annotationPhrases(report: ReportLike): string[] {
+  return [
+    report.annotation?.target,
+    report.annotation?.description,
+    report.annotation?.selectedElement,
+    report.annotation?.activeTarget,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length >= 8)
+    .map((value) => value.toLowerCase().replace(/\s+/g, ' ').trim());
+}
+
+function isVisualLayoutReport(report: ReportLike): boolean {
+  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text/i.test(reportText(report));
+}
+
+function isStylePath(path: string): boolean {
+  return /\.(?:s?css)$/i.test(path);
+}
+
+function isMarkupPath(path: string): boolean {
+  return /\.(?:html|jsx|tsx)$/i.test(path);
 }
 
 function addScore(
@@ -322,6 +379,9 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
   const routes = routeTokens(report);
   const consoleSymbols = quotedConsoleSymbols(report);
   const stackPaths = stackTracePaths(report);
+  const selectors = selectorTokens(report);
+  const phrases = annotationPhrases(report);
+  const visualLayoutReport = isVisualLayoutReport(report);
 
   return index.files
     .filter((file) => !isTestPath(file.path))
@@ -355,6 +415,25 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
         }
       }
 
+      for (const selector of selectors) {
+        const lowerSelector = selector.toLowerCase();
+        if (
+          lowerContent.includes(`.${lowerSelector}`) ||
+          lowerContent.includes(`#${lowerSelector}`) ||
+          lowerContent.includes(`class="${lowerSelector}`) ||
+          lowerContent.includes(`class='${lowerSelector}`) ||
+          lowerContent.includes(`<${lowerSelector}`)
+        ) {
+          addScore(state, 320, `code references pinned selector "${selector}"`);
+        }
+      }
+
+      for (const phrase of phrases) {
+        if (lowerContent.replace(/\s+/g, ' ').includes(phrase)) {
+          addScore(state, 260, 'content matches pinned annotation text');
+        }
+      }
+
       for (const token of tokens) {
         if (lowerPath.includes(token)) addScore(state, 60, `path matches report token "${token}"`);
         if (file.exports.some((name) => name.toLowerCase().includes(token))) {
@@ -363,6 +442,14 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
         if (file.functions.some((name) => name.toLowerCase().includes(token))) {
           addScore(state, 35, `function matches report token "${token}"`);
         }
+      }
+
+      if (visualLayoutReport && isStylePath(file.path) && /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap/i.test(file.content)) {
+        addScore(state, 170, 'stylesheet contains visual layout rules relevant to report');
+      }
+
+      if (visualLayoutReport && isMarkupPath(file.path) && /<h[1-6]\b|class=|style=|data-view=/i.test(file.content)) {
+        addScore(state, 120, 'markup contains visual target structure relevant to report');
       }
 
       if (file.nearbyTests.length > 0) addScore(state, 15, `nearby tests: ${file.nearbyTests.join(', ')}`);

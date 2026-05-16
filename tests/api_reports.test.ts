@@ -65,7 +65,7 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     assert.equal(handoffBody.memoryImpact.headline, 'Similar bug memory found');
     assert.equal(handoffBody.memoryImpact.similarCount >= 1, true);
     assert.match(handoffBody.memoryImpact.topMemory.title, /missing user fallback/i);
-    assert.ok(handoffBody.memoryImpact.impact.some((line: string) => /guard missing user/i.test(line)));
+    assert.ok(handoffBody.memoryImpact.impact.some((line: string) => /Reusable evidence cue/i.test(line)));
     assert.equal(handoffBody.agentComparison.cold.label, 'Cold agent');
     assert.equal(handoffBody.agentComparison.memory.label, 'Memory agent');
     assert.match(handoffBody.agentComparison.memory.advantage, /starts from prior/i);
@@ -177,7 +177,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /src\/users\.js/);
     assert.match(viewAfterHtml, /Memory Impact/);
     assert.match(viewAfterHtml, /Similar bug memory found/);
-    assert.match(viewAfterHtml, /guard missing user/i);
+    assert.match(viewAfterHtml, /Reusable evidence cue/i);
     assert.match(viewAfterHtml, /Current browser report/);
     assert.match(viewAfterHtml, /Prior memory/);
     assert.match(viewAfterHtml, /Verification/);

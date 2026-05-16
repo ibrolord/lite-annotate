@@ -1,5 +1,7 @@
 import { runPersonBPipeline } from './worker/person_b_pipeline.js';
 import type { PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.js';
+import { createOpenAICodePatchGeneratorFromEnv } from './worker/patch/model_generate.js';
+import type { CodePatchGenerator } from './worker/patch/model_generate.js';
 import { openVerifiedPR } from './worker/pr_gate.js';
 import type { CreatePRFunction, GitHubPRResult } from './worker/pr_gate.js';
 
@@ -15,6 +17,7 @@ export interface AutofixOptions {
   createPR?: CreatePRFunction;
   skipPR?: boolean;
   runPackageScripts?: boolean;
+  codePatchGenerator?: CodePatchGenerator;
 }
 
 export interface AutofixResult {
@@ -113,6 +116,7 @@ export async function runAutofix(
     githubToken: resolvedOptions.githubToken,
     smokeCommands: defaultSmokeCommands(report),
     runPackageScripts: resolvedOptions.runPackageScripts ?? false,
+    codePatchGenerator: resolvedOptions.codePatchGenerator ?? createOpenAICodePatchGeneratorFromEnv(),
   });
 
   console.log(
