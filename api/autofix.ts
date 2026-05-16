@@ -72,6 +72,7 @@ function defaultSmokeCommands(report: PersonBPipelineInput['report']): PersonBPi
 }
 
 function envOptions(): AutofixOptions {
+  const runPackageScripts = process.env.AUTOFIX_RUN_PACKAGE_SCRIPTS;
   return {
     workspacePath: process.env.REPO_PATH,
     repo: process.env.TARGET_REPO || process.env.GITHUB_REPO,
@@ -79,7 +80,7 @@ function envOptions(): AutofixOptions {
     branch: process.env.TARGET_REPO_BRANCH,
     githubToken: process.env.GITHUB_TOKEN,
     githubRepo: process.env.GITHUB_REPO,
-    runPackageScripts: process.env.AUTOFIX_RUN_PACKAGE_SCRIPTS === 'false' ? false : undefined,
+    runPackageScripts: runPackageScripts === 'true' ? true : runPackageScripts === 'false' ? false : undefined,
   };
 }
 
@@ -111,7 +112,7 @@ export async function runAutofix(
     branch: resolvedOptions.branch,
     githubToken: resolvedOptions.githubToken,
     smokeCommands: defaultSmokeCommands(report),
-    runPackageScripts: resolvedOptions.runPackageScripts,
+    runPackageScripts: resolvedOptions.runPackageScripts ?? false,
   });
 
   console.log(

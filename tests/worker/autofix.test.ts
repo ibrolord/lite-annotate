@@ -233,7 +233,6 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
-      runPackageScripts: false,
     });
 
     assert.equal(result.status, 'verified_no_pr');
