@@ -25,6 +25,7 @@ Read these first:
 
 - [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md)
 - [docs/GBRAIN_VALIDATION.md](docs/GBRAIN_VALIDATION.md)
+- [docs/PRD.md](docs/PRD.md)
 
 ## Safety Notes
 
