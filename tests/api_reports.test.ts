@@ -107,7 +107,13 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
           confidence: 0.82,
           shouldPatch: true,
         },
-        patch: { ok: true, files: [{ path: 'src/users.js', content: 'patched' }] },
+        patch: {
+          ok: true,
+          files: [{
+            path: 'src/users.js',
+            content: 'THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE '.repeat(400),
+          }],
+        },
         verification: {
           ok: true,
           modifiedFiles: ['src/users.js'],
@@ -175,6 +181,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /Analysis Result/);
     assert.match(viewAfterHtml, /verified_no_pr/);
     assert.match(viewAfterHtml, /src\/users\.js/);
+    assert.match(viewAfterHtml, new RegExp(`data-analysis-src="/reports/${postBody.reportId}/autofix"`));
+    assert.doesNotMatch(viewAfterHtml, /THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE/);
     assert.match(viewAfterHtml, /Memory Impact/);
     assert.match(viewAfterHtml, /Similar bug memory found/);
     assert.match(viewAfterHtml, /Reusable evidence cue/i);
