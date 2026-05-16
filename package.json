@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npx tsx api/index.ts"
+    "dev": "npx tsx api/index.ts",
+    "test": "tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
