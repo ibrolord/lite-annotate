@@ -62,6 +62,11 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     assert.equal(handoffBody.memoryImpact.similarCount >= 1, true);
     assert.match(handoffBody.memoryImpact.topMemory.title, /missing user fallback/i);
     assert.ok(handoffBody.memoryImpact.impact.some((line: string) => /guard missing user/i.test(line)));
+    assert.equal(handoffBody.agentComparison.cold.label, 'Cold agent');
+    assert.equal(handoffBody.agentComparison.memory.label, 'Memory agent');
+    assert.match(handoffBody.agentComparison.memory.advantage, /starts from prior/i);
+    assert.ok(handoffBody.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'prior_memory'));
+    assert.ok(handoffBody.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'current_browser_report'));
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
@@ -117,6 +122,10 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/autofix`));
     assert.doesNotMatch(viewBeforeHtml, /Person B/);
+    assert.match(viewBeforeHtml, /Cold Agent vs Memory Agent/);
+    assert.match(viewBeforeHtml, /Cold agent/);
+    assert.match(viewBeforeHtml, /Memory agent/);
+    assert.match(viewBeforeHtml, /Memory Receipts/);
 
     const autofix = await app.request(`/reports/${postBody.reportId}/autofix`, { method: 'POST' });
     assert.equal(autofix.status, 200);
@@ -127,6 +136,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(autofixBody.autofix.diagnosis.targetFiles[0], 'src/users.js');
     assert.equal(autofixBody.autofix.verification.ok, true);
     assert.equal(autofixBody.autofix.memoryImpact.outcomeMemory, 'diagnosis and outcome written');
+    assert.ok(autofixBody.autofix.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'code_evidence'));
+    assert.ok(autofixBody.autofix.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'verification'));
 
     const get = await app.request(`/reports/${postBody.reportId}/autofix`);
     assert.equal(get.status, 200);
@@ -136,6 +147,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     const handoffBody = await handoff.json();
     assert.equal(handoffBody.autofix.status, 'verified_no_pr');
+    assert.match(handoffBody.agentComparison.memory.outcome, /verified/i);
 
     const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
     const viewAfterHtml = await viewAfter.text();
@@ -145,6 +157,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /Memory Impact/);
     assert.match(viewAfterHtml, /Similar bug memory found/);
     assert.match(viewAfterHtml, /guard missing user/i);
+    assert.match(viewAfterHtml, /Current browser report/);
+    assert.match(viewAfterHtml, /Prior memory/);
+    assert.match(viewAfterHtml, /Verification/);
 
     const record = await store.get(postBody.reportId);
     assert.equal(record?.autofix?.status, 'verified_no_pr');

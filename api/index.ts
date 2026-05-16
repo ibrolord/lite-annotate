@@ -103,7 +103,9 @@ export function createApp(deps: {
     if (!record) return c.json({ error: 'not_found' }, 404);
     const similar = await memory.searchSimilar(record.report);
     const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
-    return c.json({ reportId: record.report.id, memory: record.memory, similar, memoryImpact });
+    const agentComparison = buildAgentComparison(memoryImpact, record.autofix ?? null);
+    const memoryReceipts = buildMemoryReceipts(record.report, memoryImpact, record.autofix ?? null);
+    return c.json({ reportId: record.report.id, memory: record.memory, similar, memoryImpact, agentComparison, memoryReceipts });
   });
 
   app.get('/reports/:id/handoff', async (c) => {
@@ -111,12 +113,16 @@ export function createApp(deps: {
     if (!record) return c.json({ error: 'not_found' }, 404);
     const similar = await memory.searchSimilar(record.report);
     const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
+    const agentComparison = buildAgentComparison(memoryImpact, record.autofix ?? null);
+    const memoryReceipts = buildMemoryReceipts(record.report, memoryImpact, record.autofix ?? null);
     return c.json({
       reportId: record.report.id,
       repo: record.report.repo,
       normalizedReport: record.report,
       memorySearchResult: similar,
       memoryImpact,
+      agentComparison,
+      memoryReceipts,
       autofix: record.autofix ?? null,
     });
   });
@@ -126,7 +132,19 @@ export function createApp(deps: {
     if (!record) return c.html('<h1>Report not found</h1>', 404);
     const similar = await memory.searchSimilar(record.report);
     const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
-    return c.html(renderReportHtml(record.report.id, record.report, record.raw, record.memory, similar, memoryImpact, record.autofix ?? null));
+    const agentComparison = buildAgentComparison(memoryImpact, record.autofix ?? null);
+    const memoryReceipts = buildMemoryReceipts(record.report, memoryImpact, record.autofix ?? null);
+    return c.html(renderReportHtml(
+      record.report.id,
+      record.report,
+      record.raw,
+      record.memory,
+      similar,
+      memoryImpact,
+      agentComparison,
+      memoryReceipts,
+      record.autofix ?? null
+    ));
   });
 
   app.get('/reports/:id/autofix', async (c) => {
@@ -153,12 +171,17 @@ export function createApp(deps: {
         ...autofixSummary,
         memoryImpact: buildMemoryImpact(record.report, record.memory, similar, autofixSummary),
       };
+      const autofixWithDemoContext = {
+        ...autofix,
+        agentComparison: buildAgentComparison(autofix.memoryImpact, autofix),
+        memoryReceipts: buildMemoryReceipts(record.report, autofix.memoryImpact, autofix),
+      };
       const updated = await store.update(record.report.id, (current) => ({
         ...current,
-        autofix,
+        autofix: autofixWithDemoContext,
         updatedAt: new Date().toISOString(),
       }));
-      return c.json({ reportId: record.report.id, autofix: updated?.autofix ?? autofix });
+      return c.json({ reportId: record.report.id, autofix: updated?.autofix ?? autofixWithDemoContext });
     } catch (err) {
       const autofix = {
         status: 'failed',
@@ -343,6 +366,8 @@ function renderReportHtml(
   memory: unknown,
   similar: unknown,
   memoryImpact: MemoryImpactSummary,
+  agentComparison: AgentComparison,
+  memoryReceipts: MemoryReceipt[],
   autofix: unknown
 ): string {
   return `<!doctype html>
@@ -375,6 +400,10 @@ function renderReportHtml(
   <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
   <h2>Memory Impact</h2>
   ${renderMemoryImpactHtml(memoryImpact)}
+  <h2>Cold Agent vs Memory Agent</h2>
+  ${renderAgentComparisonHtml(agentComparison)}
+  <h2>Memory Receipts</h2>
+  ${renderMemoryReceiptsHtml(memoryReceipts)}
   <h2>Analysis Result</h2>
   <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
 </body>
@@ -396,6 +425,27 @@ interface MemoryImpactSummary {
   } | null;
   impact: string[];
   outcomeMemory: 'pending analysis' | 'diagnosis and outcome written';
+}
+
+interface AgentComparison {
+  cold: {
+    label: 'Cold agent';
+    path: string[];
+    limitation: string;
+    outcome: string;
+  };
+  memory: {
+    label: 'Memory agent';
+    path: string[];
+    advantage: string;
+    outcome: string;
+  };
+}
+
+interface MemoryReceipt {
+  source: 'current_browser_report' | 'prior_memory' | 'code_evidence' | 'verification' | 'outcome_memory';
+  label: string;
+  detail: string;
 }
 
 function buildMemoryImpact(
@@ -455,6 +505,131 @@ function memoryProviderLabel(memory: unknown, topMemory: MemorySearchResult | nu
   return topMemory?.provider ?? 'memory';
 }
 
+function buildAgentComparison(memoryImpact: MemoryImpactSummary, autofix: unknown): AgentComparison {
+  const summary = summarizeStoredAutofix(autofix);
+  const targetFile = summary.targetFiles[0] ?? summary.candidateFiles[0] ?? 'candidate files';
+  const verified = summary.verificationOk === true;
+  const analyzed = Boolean(autofix && typeof autofix === 'object');
+
+  return {
+    cold: {
+      label: 'Cold agent',
+      path: [
+        'Start from browser breadcrumbs and repo scan.',
+        'Rank likely files from route, console text, and network path.',
+        analyzed ? `Inspect ${targetFile} after ranking.` : 'Wait for analysis before code evidence is available.',
+      ],
+      limitation: 'No memory of whether this product has seen the same failure pattern before.',
+      outcome: analyzed
+        ? `Can reach ${targetFile}, but must rediscover the missing-user failure pattern from scratch.`
+        : 'Likely needs a full repo scan before it can propose a confident fix.',
+    },
+    memory: {
+      label: 'Memory agent',
+      path: [
+        'Search durable bug and fix memory for similar failures.',
+        memoryImpact.topMemory
+          ? `Start from prior memory: ${memoryImpact.topMemory.title}.`
+          : 'Store this report as the first memory for the pattern.',
+        analyzed ? `Use code and verification receipts to close the loop on ${targetFile}.` : 'Carry prior fix strategy into the analysis handoff.',
+      ],
+      advantage: memoryImpact.topMemory
+        ? 'Starts from prior diagnosis and fix strategy instead of a cold repo scan.'
+        : 'Creates reusable memory so the next related report does not start cold.',
+      outcome: analyzed
+        ? (verified ? `Analysis verified against ${targetFile}; outcome written back to memory.` : 'Analysis recorded; outcome written back to memory.')
+        : 'Ready to analyze with prior memory already attached to the handoff.',
+    },
+  };
+}
+
+function buildMemoryReceipts(report: LiteReport, memoryImpact: MemoryImpactSummary, autofix: unknown): MemoryReceipt[] {
+  const summary = summarizeStoredAutofix(autofix);
+  const receipts: MemoryReceipt[] = [
+    {
+      source: 'current_browser_report',
+      label: 'Current browser report',
+      detail: currentReportReceipt(report),
+    },
+  ];
+
+  if (memoryImpact.topMemory) {
+    receipts.push({
+      source: 'prior_memory',
+      label: 'Prior memory',
+      detail: `${memoryImpact.topMemory.title}: ${memoryImpact.topMemory.excerpt}`,
+    });
+  }
+
+  if (summary.targetFiles.length || summary.candidateFiles.length) {
+    receipts.push({
+      source: 'code_evidence',
+      label: 'Code evidence',
+      detail: `Candidate ${summary.candidateFiles[0] ?? 'n/a'}; target ${summary.targetFiles.join(', ') || 'n/a'}. ${summary.rootCause ?? ''}`.trim(),
+    });
+  }
+
+  if (summary.verificationOk !== null) {
+    receipts.push({
+      source: 'verification',
+      label: 'Verification',
+      detail: summary.verificationOk
+        ? `Patch verification passed${summary.verificationCommands.length ? `: ${summary.verificationCommands.join(', ')}` : ''}.`
+        : 'Patch verification did not pass.',
+    });
+  }
+
+  receipts.push({
+    source: 'outcome_memory',
+    label: 'Outcome memory',
+    detail: memoryImpact.outcomeMemory === 'diagnosis and outcome written'
+      ? 'Diagnosis and PR/verification outcome were written back for future reports.'
+      : 'This report is stored; diagnosis and outcome memory will be added after analysis.',
+  });
+
+  return receipts;
+}
+
+function currentReportReceipt(report: LiteReport): string {
+  const consoleMessage = report.console[0]?.message ?? 'no console error captured';
+  const network = report.network[0]
+    ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}`
+    : 'no network breadcrumb captured';
+  return `${report.route}; ${consoleMessage}; ${network}; annotation ${report.annotation.target || 'not selected'}.`;
+}
+
+function summarizeStoredAutofix(autofix: unknown): {
+  candidateFiles: string[];
+  targetFiles: string[];
+  rootCause?: string;
+  verificationOk: boolean | null;
+  verificationCommands: string[];
+} {
+  if (!autofix || typeof autofix !== 'object') {
+    return { candidateFiles: [], targetFiles: [], verificationOk: null, verificationCommands: [] };
+  }
+
+  const record = autofix as {
+    candidates?: Array<{ path?: unknown }>;
+    diagnosis?: { targetFiles?: unknown; rootCause?: unknown };
+    verification?: { ok?: unknown; commands?: Array<{ name?: unknown }> };
+  };
+
+  const candidateFiles = Array.isArray(record.candidates)
+    ? record.candidates.map((candidate) => candidate.path).filter((path): path is string => typeof path === 'string')
+    : [];
+  const targetFiles = Array.isArray(record.diagnosis?.targetFiles)
+    ? record.diagnosis.targetFiles.filter((path): path is string => typeof path === 'string')
+    : [];
+  const verificationCommands = Array.isArray(record.verification?.commands)
+    ? record.verification.commands.map((command) => command.name).filter((name): name is string => typeof name === 'string')
+    : [];
+  const verificationOk = typeof record.verification?.ok === 'boolean' ? record.verification.ok : null;
+  const rootCause = typeof record.diagnosis?.rootCause === 'string' ? record.diagnosis.rootCause : undefined;
+
+  return { candidateFiles, targetFiles, rootCause, verificationOk, verificationCommands };
+}
+
 function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
   const top = summary.topMemory
     ? `<p><strong>${escapeHtml(summary.headline)}</strong>: ${escapeHtml(summary.topMemory.title)} <span>(${escapeHtml(summary.topMemory.provider)}, score ${summary.topMemory.score})</span></p>
@@ -466,6 +641,31 @@ function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
     ${top}
     <ul>${items}</ul>
     <p>Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
+  </section>`;
+}
+
+function renderAgentComparisonHtml(comparison: AgentComparison): string {
+  return `<section>
+    <div>
+      <h3>${escapeHtml(comparison.cold.label)}</h3>
+      <ol>${comparison.cold.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
+      <p>${escapeHtml(comparison.cold.limitation)}</p>
+      <p>${escapeHtml(comparison.cold.outcome)}</p>
+    </div>
+    <div>
+      <h3>${escapeHtml(comparison.memory.label)}</h3>
+      <ol>${comparison.memory.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
+      <p>${escapeHtml(comparison.memory.advantage)}</p>
+      <p>${escapeHtml(comparison.memory.outcome)}</p>
+    </div>
+  </section>`;
+}
+
+function renderMemoryReceiptsHtml(receipts: MemoryReceipt[]): string {
+  return `<section>
+    <ul>${receipts.map((receipt) => (
+      `<li><strong>${escapeHtml(receipt.label)}</strong>: ${escapeHtml(receipt.detail)}</li>`
+    )).join('')}</ul>
   </section>`;
 }
 
