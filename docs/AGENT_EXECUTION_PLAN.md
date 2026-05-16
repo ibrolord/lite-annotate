@@ -251,9 +251,10 @@ searchSimilar(report)
 ```
 
 2. Native path:
-   - GBrain HTTP MCP `put_page`.
+   - GBrain HTTP MCP `put_page` with `slug` and markdown frontmatter `content`.
    - GBrain HTTP MCP `search`.
    - GBrain HTTP MCP `code_refs` if available.
+   - Bearer token or OAuth client-credentials auth.
 
 3. Fallback path:
    - GitHub markdown under `bugs/`.
@@ -263,6 +264,11 @@ searchSimilar(report)
 
 ```text
 MEMORY_PROVIDER=gbrain|github-markdown
+GBRAIN_MCP_URL=https://<gbrain-service>/mcp
+GBRAIN_MCP_TOKEN=<optional-static-token>
+GBRAIN_CLIENT_ID=<optional-oauth-client-id>
+GBRAIN_CLIENT_SECRET=<optional-oauth-client-secret>
+GBRAIN_OAUTH_SCOPE="read write"
 ```
 
 Acceptance tests:

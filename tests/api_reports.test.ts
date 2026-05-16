@@ -11,7 +11,9 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-api-'));
   const oldMemoryDir = process.env.MEMORY_DIR;
+  const oldProvider = process.env.MEMORY_PROVIDER;
   process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
   const store = new ReportStore(join(root, 'reports'));
   const app = createApp({ store, memory: createMemoryAdapter() });
 
@@ -70,6 +72,8 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
+    if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
+    else process.env.MEMORY_PROVIDER = oldProvider;
   }
 });
 
@@ -77,7 +81,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-autofix-api-'));
   const oldMemoryDir = process.env.MEMORY_DIR;
+  const oldProvider = process.env.MEMORY_PROVIDER;
   process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
   const store = new ReportStore(join(root, 'reports'));
   const app = createApp({
     store,
@@ -166,5 +172,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
+    if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
+    else process.env.MEMORY_PROVIDER = oldProvider;
   }
 });

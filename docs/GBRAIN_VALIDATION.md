@@ -283,6 +283,25 @@ Customer app
   -> optional PR
 ```
 
+## Lite Annotate Adapter Status
+
+Implemented in the app:
+
+```text
+MEMORY_PROVIDER=gbrain
+GBRAIN_MCP_URL=https://<gbrain-service>/mcp
+GBRAIN_MCP_TOKEN=<static bearer token, optional>
+GBRAIN_CLIENT_ID=<OAuth client id, optional>
+GBRAIN_CLIENT_SECRET=<OAuth client secret, optional>
+GBRAIN_OAUTH_SCOPE="read write"
+```
+
+The native adapter now writes reports, diagnoses, and outcomes through GBrain
+HTTP MCP `put_page` using the real `slug` + markdown frontmatter `content`
+contract. It reads similar memory through GBrain MCP `search`, parses normal
+JSON-RPC and SSE-style MCP responses, and falls back to markdown memory if the
+GBrain call fails.
+
 ## Next Validation Needed
 
 Before betting the live demo on hosted native GBrain:

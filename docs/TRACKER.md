@@ -58,6 +58,9 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `6b70a72` | Shared / Merge | Merged PR #1 into `master` | Done | Main includes Person A capture/dashboard, Person B pipeline/API, and tracker |
 | `3cf15f7` | Shared / Memory | Showed memory impact in handoff, report view, and autofix response | Done | `npm test`; `npm run typecheck`; deterministic prior-memory hit for pinned demo |
 | `a9982a7` | Shared / Memory | Added cold-vs-memory comparison and memory receipts | Done | `npm test`; `npm run typecheck`; handoff/view/autofix expose receipt trail |
+| `c277cd9` | Shared / Memory | Documented the cold-vs-memory demo story | Done | Added `docs/GBRAIN_DEMO_STORY.md` and linked demo narrative |
+| `d057d1d` | Deploy | Added Vercel deployment adapter | Done | Added `api/vercel.ts` and `vercel.json`; Railway path remains available |
+| `ac5a599` | Shared / Memory | Restored native GBrain HTTP helper utilities | Done | `api/gbrain.ts` supports native MCP helpers on `master` |
 
 ## Gates
 
