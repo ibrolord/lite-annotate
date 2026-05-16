@@ -1,10 +1,10 @@
-# GBrain Demo Story
+# GBrain Product Demo Story
 
-## Judge-facing Pitch
+## Product Narrative
 
 Lite Annotate does not just capture bugs. It turns each report, diagnosis, fix attempt, and verification result into reusable engineering memory.
 
-The demo contrast is:
+The product contrast is:
 
 ```text
 Cold agent
@@ -12,18 +12,18 @@ Cold agent
   -> scans the repo
   -> has to rediscover the same failure pattern
 
-Memory agent
+Memory-assisted agent
   -> retrieves a similar prior bug from GBrain-compatible memory
   -> starts with the previous diagnosis and fix strategy
   -> cites browser evidence, prior memory, code evidence, and verification
   -> writes the new outcome back to memory
 ```
 
-The judge takeaway:
+The takeaway:
 
 ```text
-Without GBrain, every AI agent starts cold.
-With GBrain, every customer bug and verified fix becomes reusable engineering context.
+Without durable engineering memory, every agent starts cold.
+With Lite Annotate and GBrain-compatible memory, every customer bug and verified fix becomes reusable context for the next investigation.
 ```
 
 ## Demo Flow
@@ -34,13 +34,13 @@ With GBrain, every customer bug and verified fix becomes reusable engineering co
 https://lite-annotate-production.up.railway.app/reports/dashboard
 ```
 
-2. Open the pinned report view from the dashboard.
+2. Open a report view from the dashboard.
 
 3. Point out **Memory Impact**:
 
 - The report is written as durable bug memory.
 - Similar prior bug memory is retrieved.
-- The memory explains the same missing-user failure pattern.
+- The retrieved memory explains the same missing-user failure pattern.
 
 4. Point out **Cold Agent vs Memory Agent**:
 
@@ -60,13 +60,13 @@ https://lite-annotate-production.up.railway.app/reports/dashboard
 
 7. Refresh the same report view and show that receipts now include code evidence and verification.
 
-8. Only run the normal **Run analysis** action when the demo is ready to open a GitHub PR.
+8. Run the normal **Run analysis** action only when it is appropriate to open a GitHub PR.
 
 ## Honest Framing
 
 Native GBrain should be used when `MEMORY_PROVIDER=gbrain` and `GBRAIN_MCP_URL` are configured.
 
-When those env vars are not configured, the demo uses the GitHub markdown memory adapter and labels it honestly as GBrain-compatible fallback memory. The product flow is still the same:
+When those env vars are not configured, Lite Annotate uses the GitHub markdown memory adapter and labels it honestly as GBrain-compatible fallback memory. The product flow is still the same:
 
 ```text
 write memory -> retrieve similar memory -> use it in handoff -> write diagnosis/outcome memory
@@ -79,8 +79,8 @@ write memory -> retrieve similar memory -> use it in handoff -> write diagnosis/
 - `/reports/:id/view` renders Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts.
 - `POST /reports/:id/autofix` stores analysis output with memory impact, comparison, and receipts.
 - `POST /reports/:id/autofix?dryRun=1` verifies analysis while suppressing PR creation.
-- The pinned demo has deterministic prior memory so the hackathon demo works even without hosted native GBrain.
+- The pinned demo has deterministic prior memory so the demo remains explainable even without hosted native GBrain.
 
 ## Next Upgrade
 
-The next step is to pass retrieved memory directly into the diagnosis/patch prompt, then record whether memory changed the selected file, diagnosis confidence, or fix strategy.
+Pass retrieved memory directly into the diagnosis and patch prompt, then record whether memory changed the selected file, diagnosis confidence, or fix strategy.

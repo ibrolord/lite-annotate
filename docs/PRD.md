@@ -1,18 +1,33 @@
-# Product Requirements Document: Lite Annotate
+# Lite Annotate Product Requirements
 
 ## Status
 
-Draft for hackathon collaboration.
+Working product boundary for the current Lite Annotate implementation.
 
 ## Product Summary
 
-Lite Annotate is a hosted bug-feedback and engineering-review loop for web apps.
+Lite Annotate is a hosted bug-capture and engineering-review loop for web apps.
 
 It lets a developer install one widget script. When a user reports a bug, Lite Annotate captures the technical context, stores the report as long-term memory, retrieves similar prior bugs and relevant code context, produces an engineering diagnosis, and opens a scoped GitHub PR when the fix is clear and verifiable.
 
 ## One-line Pitch
 
 Customer bug reports become engineering memory, diagnosis, and fix PRs.
+
+## Product Position
+
+Lite Annotate is not positioned as an autonomous coding novelty. It is a governed engineering handoff:
+
+```text
+capture evidence
+  -> preserve memory
+  -> diagnose with repo context
+  -> patch within a scoped target
+  -> verify locally
+  -> open a reviewable PR only when gates pass
+```
+
+The product should make diagnosis and review valuable even when PR creation is skipped.
 
 ## Problem
 
@@ -46,7 +61,7 @@ The app user experiences a bug and needs a low-friction way to report it from in
 ## Non-goals
 
 - Full session replay.
-- Multi-tenant billing/auth for the hackathon version.
+- Multi-tenant billing/auth in the current implementation.
 - Perfect whole-repo semantic understanding.
 - Fully autonomous merge.
 - Running arbitrary commands from customer input.
@@ -146,7 +161,7 @@ visual:
 
 The session capture is a technical breadcrumb trail, not full session replay.
 
-For the hackathon, retain the last 50 console events, last 50 network events, and last 50 session events.
+Retain the last 50 console events, last 50 network events, and last 50 session events.
 
 ### API
 
@@ -192,11 +207,11 @@ The worker index must extract, where possible:
 - Nearby tests.
 - Package scripts.
 
-For the hackathon version, support JavaScript/TypeScript first.
+For the current implementation, support JavaScript/TypeScript first.
 
 ### Accuracy Requirements
 
-Accuracy is the primary hackathon priority.
+Accuracy is the primary product priority.
 
 Every generated PR must pass these gates before the branch is pushed:
 
@@ -350,7 +365,7 @@ Use GStack as the engineering workflow layer:
 investigate -> review -> QA -> ship
 ```
 
-For the hackathon, GStack can be:
+In the current implementation, GStack can be:
 
 - The workflow used by the team to build/review/ship.
 - The visible framing for the review worker.
@@ -393,9 +408,9 @@ Host as a separate service:
 - OAuth client for `lite-annotate-worker`.
 - Embedding provider key.
 
-## Security Requirements Deferred For Hackathon
+## Security Requirements
 
-For the hackathon, accuracy and demo reliability are higher priority than production security.
+The current implementation is not production-hardened SaaS. Accuracy and demo reliability are the immediate priorities, while the security model below is the minimum boundary for safe product evolution.
 
 The following are acknowledged but not gating Phase 1-4 unless they directly affect PR accuracy:
 
@@ -452,7 +467,7 @@ The demo must show:
 5. Engineering diagnosis.
 6. GitHub PR if stable.
 
-The demo must have a backup:
+The demo must have a backup path:
 
 - Pre-recorded successful run.
 - Pre-opened PR.
@@ -460,7 +475,7 @@ The demo must have a backup:
 
 ## Success Metrics
 
-For the hackathon:
+For the current implementation:
 
 - Report submitted from public page.
 - Report includes annotation, console, network, and lightweight session breadcrumbs.
@@ -481,8 +496,7 @@ For product direction:
 
 ## Open Questions
 
-- Which host will run the API/worker today?
+- Which host should run the API/worker beyond the current demo deployment?
 - Which Postgres/Supabase project will host GBrain?
 - Which embedding provider key will be used?
-- Do judges require native GBrain, or is a validated GBrain-compatible fallback acceptable?
 - Can hosted GStack invocation be made safe in time, or should it remain the workflow framing?
