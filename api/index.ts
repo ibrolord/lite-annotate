@@ -62,7 +62,7 @@ export function createApp(deps: {
 
   app.use('*', cors());
 
-  app.get('/', (c) => c.redirect('/demo'));
+  app.get('/', (c) => c.redirect(CUSTOMER_DEMO_URL));
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.get('/widget.js', async (c) => {
