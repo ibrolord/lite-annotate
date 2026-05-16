@@ -85,6 +85,34 @@ test('gbrain memory adapter writes pages through HTTP MCP and searches native re
   }
 });
 
+test('gbrain memory adapter parses text search output from hosted GBrain MCP', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gbrain-text-'));
+  const calls: McpCall[] = [];
+  const server = await createFakeGBrainServer(calls, {
+    searchPayload: `[1.0000] bugs/bug_memory -- # Bug: User profile crashes reading name
+[0.6749] bugs/bug_prior -- # Bug: Prior profile crash`,
+  });
+  const env = snapshotEnv();
+  setGBrainEnv({ root, url: server.url, oauth: true });
+
+  try {
+    const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+    const report = normalizeReportPayload(fixture, { id: 'bug_memory', createdAt: fixture.createdAt });
+    const memory = createMemoryAdapter();
+
+    const similar = await memory.searchSimilar(report);
+    assert.equal(similar[0]?.provider, 'gbrain');
+    assert.equal(similar[0]?.reportId, 'bug_memory');
+    assert.equal(similar[0]?.score, 1);
+    assert.equal(similar[0]?.path, 'bugs/bug_memory');
+    assert.match(similar[0]?.title ?? '', /User profile crashes/);
+    assert.equal(similar[1]?.reportId, 'bug_prior');
+  } finally {
+    restoreEnv(env);
+    await server.close();
+  }
+});
+
 test('gbrain provider falls back to markdown memory when MCP is unavailable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gbrain-fallback-'));
   const server = await createFailingServer();
@@ -120,7 +148,10 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
-async function createFakeGBrainServer(calls: McpCall[]): Promise<TestServer> {
+async function createFakeGBrainServer(
+  calls: McpCall[],
+  options: { searchPayload?: unknown } = {}
+): Promise<TestServer> {
   const server = createServer(async (req, res) => {
     try {
       if (req.url === '/.well-known/oauth-authorization-server') {
@@ -155,7 +186,7 @@ async function createFakeGBrainServer(calls: McpCall[]): Promise<TestServer> {
       });
 
       if (tool === 'search') {
-        return mcp(res, body.id, [
+        return mcp(res, body.id, options.searchPayload ?? [
           {
             slug: 'bugs/bug_memory',
             title: 'Bug: User profile crashes reading name',

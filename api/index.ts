@@ -278,6 +278,67 @@ export function createApp(deps: {
     }
   });
 
+  app.post('/reports/:id/gstack/qa', async (c) => {
+    const auth = requireGStackQaTrigger(c.req.raw);
+    if (!auth.ok) return c.json({ error: auth.error, message: auth.message }, auth.status);
+
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
+    const callbackBaseUrl = process.env.GSTACK_CALLBACK_BASE_URL?.replace(/\/+$/, '') ?? publicBaseUrl;
+    const wantsHtml = requestPrefersHtml(c.req.raw);
+    if (!callbackBaseUrl) {
+      const message = 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required';
+      if (wantsHtml) {
+        await store.update(record.report.id, (current) => ({
+          ...current,
+          gstackReview: buildFailedGStackTrigger(record.report.id, message),
+          updatedAt: new Date().toISOString(),
+        }));
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({ error: 'gstack_not_configured', message }, 503);
+    }
+
+    try {
+      const job = await createRemoteGStackReview({
+        reportId: record.report.id,
+        repo: record.report.repo,
+        mode: 'qa',
+        allowPr: false,
+        report: record.report,
+        reportUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}` : undefined,
+        memoryUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/memory` : undefined,
+        handoffUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/handoff` : undefined,
+        callbackUrl: `${callbackBaseUrl}/internal/gstack-callback`,
+      });
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        gstackReview: mergeQueuedGStackReview(current.gstackReview, job),
+        updatedAt: new Date().toISOString(),
+      }));
+      if (wantsHtml) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({
+        reportId: record.report.id,
+        investigation: buildGStackInvestigation(record.report, updated?.gstackReview ?? job),
+      }, 202);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (wantsHtml) {
+        await store.update(record.report.id, (current) => ({
+          ...current,
+          gstackReview: buildFailedGStackTrigger(record.report.id, message),
+          updatedAt: new Date().toISOString(),
+        }));
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({ error: 'gstack_job_failed', message }, 502);
+    }
+  });
+
   app.post('/reports/:id/gstack-review', async (c) => {
     const auth = requireConfiguredBearer(c.req.raw, 'GSTACK_TRIGGER_TOKEN');
     if (!auth.ok) return c.json({ error: auth.error, message: auth.message }, auth.status);
@@ -395,6 +456,9 @@ export function createApp(deps: {
         autofix: autofixWithDemoContext,
         updatedAt: new Date().toISOString(),
       }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#analysis-result`, 303);
+      }
       return c.json({ reportId: record.report.id, autofix: updated?.autofix ?? autofixWithDemoContext });
     } catch (err) {
       const autofix = {
@@ -407,6 +471,9 @@ export function createApp(deps: {
         autofix,
         updatedAt: new Date().toISOString(),
       }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#analysis-result`, 303);
+      }
       return c.json({ reportId: record.report.id, autofix }, 500);
     }
   });
@@ -921,7 +988,7 @@ function renderReportHtml(
           <button class="safe" type="submit">Dry run analysis</button>
         </form>
         <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
-          <button class="danger" type="submit">Run analysis</button>
+          <button class="danger" type="submit">Run Auto-Fix</button>
         </form>
       </div>
     </header>
@@ -969,7 +1036,7 @@ function renderReportHtml(
               <input id="target-repo" name="repo" value="${escapeHtml(report.repo)}" autocomplete="off" spellcheck="false" />
               <button type="submit">Save repo</button>
             </div>
-            <p>Dry run analysis and Run analysis use this repository for file ranking, patch verification, and PR creation.</p>
+            <p>Dry run analysis and Run Auto-Fix use this repository for file ranking, patch verification, and PR creation.</p>
           </form>
         </section>
         <section class="surface">
@@ -978,10 +1045,10 @@ function renderReportHtml(
           </div>
           <div class="safety-list">
             <div class="safety-row"><span>Safe validation</span><div><strong>Dry run analysis</strong><p>Verifies diagnosis and patch gates without opening a public PR.</p></div></div>
-            <div class="safety-row"><span>PR-opening action</span><div><strong>Run analysis</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
+            <div class="safety-row"><span>PR-opening action</span><div><strong>Run Auto-Fix</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
           </div>
         </section>
-        <section class="surface">
+        <section class="surface" id="analysis-result">
           <div class="surface-head">
             <h2>Analysis Result</h2>
             <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
@@ -1100,7 +1167,7 @@ interface GStackInvestigationView {
   recommendedAction: { type: 'wait' | 'autofix' | 'manual' | 'none'; label: string };
   runner: {
     jobId?: string;
-    workflow: 'investigate';
+    workflow: GStackJobMode;
     commandsRun: string[];
   };
   raw: StoredGStackReviewRecord | null;
@@ -1256,18 +1323,20 @@ function buildGStackInvestigation(
 ): GStackInvestigationView {
   const result = gstackReview?.result;
   const status = gstackReview?.status ?? 'not_run';
+  const workflow = gstackReview?.mode ?? 'investigate';
+  const workflowLabel = gstackWorkflowLabel(workflow);
   const headline = result?.headline
     ?? (result?.summary
     ? firstSentence(result.summary)
     : status === 'queued'
-      ? 'GStack investigation is queued.'
+      ? `GStack ${workflowLabel} is queued.`
       : status === 'running'
-        ? 'GStack is investigating this report against the repository.'
-        : 'No GStack investigation has run yet.');
+        ? `GStack is running ${workflowLabel} against this report.`
+        : 'No GStack workflow has run yet.');
   const rootCause = result?.rootCause
     ?? result?.diagnosis
     ?? (result?.summary && status !== 'queued' && status !== 'running' ? result.summary : '')
-    ?? 'Run the investigation to trace the browser evidence into the repository.';
+    ?? 'Run a GStack workflow to trace the browser evidence into the repository.';
   const evidence = buildGStackEvidence(report, result);
   const confidence = result?.confidence ?? gstackConfidence(status, result, evidence);
 
@@ -1280,11 +1349,18 @@ function buildGStackInvestigation(
     recommendedAction: result?.recommendedAction ?? gstackRecommendedAction(status, result),
     runner: {
       jobId: gstackReview?.jobId,
-      workflow: 'investigate',
+      workflow,
       commandsRun: result?.commandsRun ?? [],
     },
     raw: gstackReview,
   };
+}
+
+function gstackWorkflowLabel(mode: GStackJobMode): string {
+  if (mode === 'qa') return 'QA';
+  if (mode === 'ship') return 'ship check';
+  if (mode === 'review_fix') return 'review';
+  return 'investigation';
 }
 
 function buildGStackEvidence(
@@ -1477,11 +1553,17 @@ function renderGStackInvestigationHtml(
     )).join('')
     : '<li><span>Evidence</span><strong>Run the investigation to connect browser evidence to repo evidence.</strong></li>';
   const triggerState = getGStackUiTriggerState();
-  const action = triggerState.enabled
+  const qaTriggerState = getGStackQaTriggerState();
+  const investigateAction = triggerState.enabled
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate">
         <button class="quiet" type="submit">Investigate with GStack</button>
       </form>`
     : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
+  const qaAction = qaTriggerState.enabled
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa">
+        <button class="quiet" type="submit">Run GStack QA</button>
+      </form>`
+    : '';
   const followup = investigation.recommendedAction.type === 'autofix' && investigation.raw?.result
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
         <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
@@ -1498,7 +1580,8 @@ function renderGStackInvestigationHtml(
       <p class="root-cause">${escapeHtml(investigation.rootCause)}</p>
       <p>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
       <div class="investigation-actions">
-        ${action}
+        ${investigateAction}
+        ${qaAction}
         ${followup}
       </div>
     </div>
@@ -1615,6 +1698,28 @@ function getGStackUiTriggerState(): { enabled: boolean; message: string } {
   return { enabled: true, message: 'GStack investigation can be started from this report.' };
 }
 
+function getGStackQaTriggerState(): { enabled: boolean; message: string } {
+  if (process.env.GSTACK_QA_UI_TRIGGER_ENABLED !== '1') {
+    return {
+      enabled: false,
+      message: 'GStack QA is available through the protected API on this deployment.',
+    };
+  }
+  if (!process.env.GSTACK_RUNNER_URL) {
+    return {
+      enabled: false,
+      message: 'GStack QA trigger is enabled, but GSTACK_RUNNER_URL is not configured.',
+    };
+  }
+  if (!process.env.PUBLIC_BASE_URL && !process.env.GSTACK_CALLBACK_BASE_URL) {
+    return {
+      enabled: false,
+      message: 'GStack QA trigger is enabled, but PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required.',
+    };
+  }
+  return { enabled: true, message: 'GStack QA can be started from this report.' };
+}
+
 function requireGStackProductTrigger(
   request: Request
 ): { ok: true } | { ok: false; status: 401 | 403 | 503; error: string; message: string } {
@@ -1627,6 +1732,21 @@ function requireGStackProductTrigger(
     status: 503,
     error: 'gstack_not_configured',
     message: 'GSTACK_UI_TRIGGER_ENABLED=1 or GSTACK_TRIGGER_TOKEN is required',
+  };
+}
+
+function requireGStackQaTrigger(
+  request: Request
+): { ok: true } | { ok: false; status: 401 | 403 | 503; error: string; message: string } {
+  if (process.env.GSTACK_QA_UI_TRIGGER_ENABLED === '1') return { ok: true };
+  const configured = requireConfiguredBearer(request, 'GSTACK_TRIGGER_TOKEN');
+  if (configured.ok) return configured;
+  if (configured.status === 401) return configured;
+  return {
+    ok: false,
+    status: 503,
+    error: 'gstack_not_configured',
+    message: 'GSTACK_QA_UI_TRIGGER_ENABLED=1 or GSTACK_TRIGGER_TOKEN is required',
   };
 }
 

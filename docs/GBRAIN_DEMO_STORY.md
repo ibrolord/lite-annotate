@@ -60,7 +60,7 @@ https://lite-annotate-production.up.railway.app/reports/dashboard
 
 7. Refresh the same report view and show that receipts now include code evidence and verification.
 
-8. Run the normal **Run analysis** action only when it is appropriate to open a GitHub PR.
+8. Run **Run Auto-Fix** only when it is appropriate to open a GitHub PR.
 
 ## Honest Framing
 

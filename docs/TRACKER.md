@@ -8,7 +8,7 @@ Source of truth for Person A / Person B ownership, current status, and commit-le
 
 | Lane | Owner scope | Status | Current proof | Next action |
 | --- | --- | --- | --- | --- |
-| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; native GBrain memory write confirmed; `/reports/dashboard` shows current hosted report | Keep tracker updated if capture/report contract changes |
+| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; native GBrain memory write/search confirmed with OpenAI embeddings; `/reports/dashboard` shows current hosted report | Keep tracker updated if capture/report contract changes |
 | Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Hosted PR-opening proof complete | Commits `69c1f75` through `2f72925`; worker/API tests; hosted handoff exposes Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts for `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; dry-run analysis implemented locally in `0dc53f6`; hosted deployment `7454d1aa-a367-4313-8205-3e4b34b60b52` ran dry-run and PR mode against `ibrolord/lite-annotate-demo-pr-proof`; PR opened: https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 | Review PR #1 or reset the proof repo if the demo needs to be rerun |
 
 ## Person B Start Packet
@@ -74,6 +74,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `hosted-gstack-review-2026-05-16` | GStack Runner / Deploy | Ran authorized hosted GStack runner review | Done | Railway deployment `7a1e00bc-404a-4e94-8974-a03e476e7de4`; unauthenticated trigger returns 401; authorized job `gstack_84508758-0dbd-493d-aaf3-3867b6e31b69` returned `passed` and replaced the stale queued record |
 | `model-backed-autofix-2026-05-16` | Person B / Auto-Fix | Added model-backed patch generation with HTML/CSS file finding | Done | `npm run typecheck`; `npm test` 48/48; `git diff --check`; real ecommerce repo ranking returns `index.html` and `src/styles.css` as top targets before model patching |
 | `autofix-generic-pr-gates-2026-05-16` | Person B / Auto-Fix | Removed demo-specific default smoke checks | Done | `npm run typecheck`; focused Auto-Fix/verification/PR-gate tests; CSS patches now get generic syntax verification and PR gate refuses patches with no recorded verification checks |
+| `hosted-gbrain-embeddings-2026-05-16` | Person A / Memory | Enabled hosted GBrain OpenAI embedding provider and parsed hosted text search hits | Done | GBrain deployment `363b8751-c562-4f31-a794-f0e4df239d96`; `/health` returns `0.35.1.0` on Postgres; OAuth metadata returns `client_credentials`; `gbrain providers list` shows `openai` ready; `gbrain embed --stale` embedded 23 chunks across 15 pages; direct search returns `bugs/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430` at score `1.0000`; `tests/memory.test.ts` covers hosted text search parsing |
 
 ## Gates
 
@@ -82,7 +83,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | Capture Gate | Pass | Uses Person A payload |
 | API Gate | Pass | Uses `GET /reports/:id` |
 | Contract Gate | Pass | Depends on unchanged normalized JSON |
-| Memory Gate | Pass with hosted native GBrain and markdown fallback adapter | Consumes `searchSimilar` output; hosted report, diagnosis, and outcome writes returned `provider: gbrain` |
+| Memory Gate | Pass with hosted native GBrain, OpenAI embeddings, and markdown fallback adapter | Consumes `searchSimilar` output; hosted report, diagnosis, and outcome writes returned `provider: gbrain`; hosted GBrain semantic search returns the target report at score `1.0000` |
 | GStack workflow | Optional developer/agent workflow; not required for runtime capture/report demo | Optional for planning/review/QA/ship; record evidence only when an actual GStack command or skill is used |
 | Demo Visibility Gate | Pass via `/demo`, `/reports/:id/view`, and `/reports/dashboard` | Uses dashboard/handoff links |
 | Person B Handoff Gate | Pass | Pass |

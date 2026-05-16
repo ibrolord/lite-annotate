@@ -234,15 +234,14 @@ PASS: Lite Annotate has MEMORY_PROVIDER=gbrain.
 PASS: Lite Annotate has GBRAIN_MCP_URL=https://gbrain-production-9170.up.railway.app/mcp.
 PASS: Lite Annotate has OAuth client credentials for the `lite-annotate-worker` client.
 PASS: Lite Annotate has REPORT_STORE_DIR=/data/reports on a Railway volume.
-NOTE: No embedding provider key was configured for hosted semantic embeddings.
+PASS: GBrain has an OpenAI embedding provider key configured for hosted semantic embeddings.
 ```
 
 Conclusion:
 
 ```text
 Hosted native GBrain is validated for report, diagnosis, outcome, and search memory.
-Search proof is keyword/native GBrain search plus Lite Annotate searchSimilar.
-Full semantic retrieval quality still depends on adding an embedding provider key.
+Search proof now includes hosted GBrain OpenAI embeddings plus Lite Annotate searchSimilar.
 ```
 
 Hosted services:
@@ -277,6 +276,9 @@ PASS: Direct `gbrain search` found the hosted report by title.
 PASS: POST /reports/:id/diagnosis returned provider=gbrain status=written.
 PASS: POST /reports/:id/outcome returned provider=gbrain status=written.
 PASS: Direct `gbrain search` found the hosted diagnosis and outcome pages.
+PASS: `gbrain providers list` reported `openai` ready on hosted GBrain.
+PASS: `gbrain embed --stale` embedded 23 stale chunks across 15 pages.
+PASS: Direct semantic search for "User profile crashes reading name" returned `bugs/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430` at score `1.0000`.
 PASS: Restarted Lite Annotate and retrieved the same hosted report from the /data volume.
 PASS: Browser smoke submitted a report through the hosted widget and dashboard showed annotation, console, network, session, screenshot, memory, and handoff context.
 ```
@@ -356,7 +358,5 @@ GBrain call fails.
 
 Before improving retrieval quality beyond the hackathon proof:
 
-1. Add an embedding provider key to hosted GBrain.
-2. Re-run direct report, diagnosis, outcome, and search validation.
-3. Add hosted repo/code source sync if Person B should query GBrain code refs remotely.
-4. Keep worker-side repo clone/index as the source-of-truth code path until GBrain code-def behavior is reliable for the demo repo.
+1. Add hosted repo/code source sync if Person B should query GBrain code refs remotely.
+2. Keep worker-side repo clone/index as the source-of-truth code path until GBrain code-def behavior is reliable for the demo repo.

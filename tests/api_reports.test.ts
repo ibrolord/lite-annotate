@@ -135,7 +135,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const viewBefore = await app.request(`/reports/${postBody.reportId}/view`);
     assert.equal(viewBefore.status, 200);
     const viewBeforeHtml = await viewBefore.text();
-    assert.match(viewBeforeHtml, /Run analysis/);
+    assert.match(viewBeforeHtml, /Run Auto-Fix/);
+    assert.doesNotMatch(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, /Dry run analysis/);
     assert.match(viewBeforeHtml, /Captured screen/);
     assert.match(viewBeforeHtml, /Interaction summary/);
@@ -170,6 +171,17 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(get.status, 200);
     const getBody = await get.json();
     assert.equal(getBody.autofix.status, 'verified_no_pr');
+
+    const htmlAutofix = await app.request(`/reports/${postBody.reportId}/autofix`, {
+      method: 'POST',
+      headers: { Accept: 'text/html' },
+    });
+    assert.equal(htmlAutofix.status, 303);
+    assert.equal(
+      htmlAutofix.headers.get('location'),
+      `/reports/${postBody.reportId}/view#analysis-result`
+    );
+    assert.deepEqual(dryRunCalls, [true, false]);
 
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     const handoffBody = await handoff.json();

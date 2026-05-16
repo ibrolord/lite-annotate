@@ -539,6 +539,7 @@ function mcpContentText(value: Record<string, unknown>): string | undefined {
 
 function extractGBrainResultItems(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
+  if (typeof value === 'string') return parseGBrainSearchText(value);
   const record = asRecord(value);
   if (!record) return [];
   for (const key of ['results', 'items', 'pages', 'refs', 'matches']) {
@@ -546,6 +547,25 @@ function extractGBrainResultItems(value: unknown): unknown[] {
     if (Array.isArray(candidate)) return candidate;
   }
   return [];
+}
+
+function parseGBrainSearchText(value: string): Record<string, unknown>[] {
+  const hits: Record<string, unknown>[] = [];
+  const linePattern = /^\s*\[([0-9.]+)\]\s+([^\s]+)(?:\s+--\s+(.*))?$/;
+  for (const line of value.split('\n')) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    const [, score, path, text = ''] = match;
+    hits.push({
+      provider: 'gbrain',
+      score: Number(score),
+      slug: path,
+      path,
+      title: text.replace(/^#\s*/, '').trim() || path,
+      excerpt: text.trim(),
+    });
+  }
+  return hits;
 }
 
 function normalizeGBrainSearchResult(item: unknown, index: number): MemorySearchResult {
