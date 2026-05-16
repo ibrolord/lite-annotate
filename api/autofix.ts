@@ -91,12 +91,13 @@ export async function runAutofix(
   const resolvedOptions = { ...envOptions(), ...options };
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
-  const pipeline = runPersonBPipeline({
+  const pipeline = await runPersonBPipeline({
     report,
     workspacePath: resolvedOptions.workspacePath,
     repo: resolvedOptions.repo,
     workspaceRoot: resolvedOptions.workspaceRoot,
     branch: resolvedOptions.branch,
+    githubToken: resolvedOptions.githubToken,
     smokeCommands: defaultSmokeCommands(report),
     runPackageScripts: resolvedOptions.runPackageScripts,
   });

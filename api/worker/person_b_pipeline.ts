@@ -14,6 +14,7 @@ export interface PersonBPipelineInput {
   repo?: string;
   workspaceRoot?: string;
   branch?: string;
+  githubToken?: string;
   smokeCommands?: VerificationCommandInput[];
   runPackageScripts?: boolean;
 }
@@ -27,16 +28,17 @@ export interface PersonBPipelineResult {
   verification: PatchVerificationResult | null;
 }
 
-export function runPersonBPipeline(input: PersonBPipelineInput): PersonBPipelineResult {
+export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<PersonBPipelineResult> {
   if (!input.workspacePath && !input.repo) {
     throw new Error('runPersonBPipeline requires workspacePath or repo');
   }
 
-  const workspacePath = input.workspacePath ?? ensureRepoWorkspace({
+  const workspacePath = input.workspacePath ?? (await ensureRepoWorkspace({
     repo: input.repo as string,
     workspaceRoot: input.workspaceRoot,
     branch: input.branch,
-  }).path;
+    githubToken: input.githubToken,
+  })).path;
 
   const index = buildCodeIndex(workspacePath);
   const candidates = rankCandidateFiles(index, input.report);

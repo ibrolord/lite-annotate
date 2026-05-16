@@ -28,10 +28,10 @@ module.exports = { formatUserGreeting };
   return root;
 }
 
-test('runPersonBPipeline ranks, diagnoses, patches, and verifies the pinned demo bug', () => {
+test('runPersonBPipeline ranks, diagnoses, patches, and verifies the pinned demo bug', async () => {
   const root = makeRepo();
   try {
-    const result = runPersonBPipeline({
+    const result = await runPersonBPipeline({
       workspacePath: root,
       report: {
         title: 'User profile crashes reading name',
