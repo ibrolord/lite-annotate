@@ -9,7 +9,7 @@ Source of truth for Person A / Person B ownership, current status, and commit-le
 | Lane | Owner scope | Status | Current proof | Next action |
 | --- | --- | --- | --- | --- |
 | Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a14c55c4-8b49-4a53-991d-e2e787490eaa`; Railway deployment `cb881adf-7336-4571-af21-96ad2c3c653f`; `/reports/dashboard` shows context and handoff | Keep tracker updated if capture/report contract changes |
-| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; hosted `GET /reports/:id/autofix` returns stored Person B result slot; memory impact panel implemented locally in `3cf15f7` | Run hosted `POST /reports/:id/autofix` with target repo and GitHub credentials configured |
+| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; hosted `GET /reports/:id/autofix` returns stored Person B result slot; memory impact panel implemented locally in `3cf15f7`; cold-vs-memory receipts implemented locally in `a9982a7` | Run hosted `POST /reports/:id/autofix` with target repo and GitHub credentials configured |
 
 ## Person B Start Packet
 
@@ -57,6 +57,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `55744ff` | Shared / Merge prep | Merged current master into Person A tracker branch | Done | Resolved Person A dashboard with Person B API conflicts |
 | `6b70a72` | Shared / Merge | Merged PR #1 into `master` | Done | Main includes Person A capture/dashboard, Person B pipeline/API, and tracker |
 | `3cf15f7` | Shared / Memory | Showed memory impact in handoff, report view, and autofix response | Done | `npm test`; `npm run typecheck`; deterministic prior-memory hit for pinned demo |
+| `a9982a7` | Shared / Memory | Added cold-vs-memory comparison and memory receipts | Done | `npm test`; `npm run typecheck`; handoff/view/autofix expose receipt trail |
 
 ## Gates
 

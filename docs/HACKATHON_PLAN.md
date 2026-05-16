@@ -53,6 +53,15 @@ Use GBrain for:
 - Diagnosis and PR outcome memory.
 - Code-context retrieval where the indexed operations work, especially `search` and `code_refs`.
 
+Show GBrain's demo impact as a contrast:
+
+```text
+Cold agent: browser breadcrumbs -> repo scan -> rediscover the failure pattern
+Memory agent: prior bug memory -> known fix strategy -> evidence-backed diagnosis
+```
+
+The report view should make this visible through a Memory Impact panel, a Cold Agent vs Memory Agent comparison, and Memory Receipts that cite current browser evidence, prior memory, code evidence, verification, and outcome memory.
+
 Do not make the core demo depend on GBrain being a perfect code intelligence engine.
 
 For the strong version:

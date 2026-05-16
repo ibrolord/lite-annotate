@@ -24,6 +24,7 @@ customer feedback -> memory -> engineering review -> fix PR
 Read these first:
 
 - [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md)
+- [docs/GBRAIN_DEMO_STORY.md](docs/GBRAIN_DEMO_STORY.md)
 - [docs/GBRAIN_VALIDATION.md](docs/GBRAIN_VALIDATION.md)
 - [docs/PRD.md](docs/PRD.md)
 - [docs/AGENT_EXECUTION_PLAN.md](docs/AGENT_EXECUTION_PLAN.md)
