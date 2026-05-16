@@ -42,10 +42,11 @@ function makeGitRepo(): string {
   return root;
 }
 
-function makeCommerceRepo(): string {
+function makeCommerceRepo(options: { alreadyGuarded?: boolean } = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'lite-annotate-commerce-autofix-'));
   mkdirSync(join(root, 'src'), { recursive: true });
   mkdirSync(join(root, 'api', 'customers'), { recursive: true });
+  const guard = options.alreadyGuarded ? "  if (!customer) return 'Customer not found';\n" : '';
   writeFileSync(
     join(root, 'src', 'customer.js'),
     `const customers = [
@@ -63,7 +64,7 @@ export function getCustomerById(customerId) {
 
 export function formatLoyaltyGreeting(customerId) {
   const customer = getCustomerById(customerId);
-  return \`Welcome back, \${customer.name}. Your \${customer.tier} credit is $\${customer.credits}.\`;
+${guard}  return \`Welcome back, \${customer.name}. Your \${customer.tier} credit is $\${customer.credits}.\`;
 }
 `
   );
@@ -261,6 +262,48 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
     assert.equal(result.pipeline.patch.ok, true);
     assert.equal(result.pipeline.verification?.ok, true);
     assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/customer.js']);
+    assert.ok(result.pipeline.verification?.commands.some((command) => command.stdout.includes('Customer not found')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix verifies the Cedar & Sail loyalty crash when repo HEAD is already guarded', async () => {
+  const root = makeCommerceRepo({ alreadyGuarded: true });
+  try {
+    const result = await runAutofix('bug_cedar_account_already_fixed', {
+      title: 'Account loyalty profile crashes',
+      description: 'Clicked Load loyalty profile on /account.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/account',
+      route: '/account',
+      console: [
+        {
+          level: 'error',
+          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name')",
+          stack: [
+            "TypeError: Cannot read properties of undefined (reading 'name')",
+            '    at formatLoyaltyGreeting (http://localhost:4174/src/customer.js:16:36)',
+            '    at HTMLButtonElement.loadLoyaltyProfile (http://localhost:4174/src/app.js:137:22)',
+          ].join('\n'),
+        },
+      ],
+      network: [{ method: 'GET', url: '/api/customers/vip-404', status: 404, failed: true }],
+      session: [{ type: 'click', target: 'button:Load loyalty profile' }],
+    }, {
+      workspacePath: root,
+      githubToken: undefined,
+      githubRepo: undefined,
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.candidates[0]?.path, 'src/customer.js');
+    assert.equal(result.pipeline.diagnosis.targetFiles[0], 'src/customer.js');
+    assert.equal(result.pipeline.patch.ok, true);
+    assert.deepEqual(result.pipeline.patch.files, []);
+    assert.match(result.pipeline.patch.error ?? '', /already contains/i);
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, []);
     assert.ok(result.pipeline.verification?.commands.some((command) => command.stdout.includes('Customer not found')));
   } finally {
     rmSync(root, { recursive: true, force: true });

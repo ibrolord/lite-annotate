@@ -155,6 +155,12 @@ test('widget prepares html2canvas clones for modern CSS screenshots', async () =
   assert.match(submitted[0].screenshot.value, /^data:image\/png/);
 });
 
+test('widget avoids oklch inline styles because html2canvas parses them before clone overrides', async () => {
+  const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(script, /oklch\(/);
+});
+
 test('widget clears an already pinned annotation with Escape', async () => {
   const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
   const submitted: any[] = [];

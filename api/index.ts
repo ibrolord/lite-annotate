@@ -38,6 +38,7 @@ export function createApp(deps: {
       const { runAutofix } = await import('./autofix.js');
       return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1], {
         skipPR: context.dryRun,
+        runPackageScripts: context.dryRun ? false : undefined,
       });
     });
 
@@ -901,7 +902,7 @@ function renderReportHtml(
         </div>
         <div class="stage-note">
           <p><strong>${escapeHtml(report.annotation.target || 'No page target pinned')}</strong></p>
-          <p>${escapeHtml(report.console[0]?.message || 'No console error captured')}</p>
+          <p>${escapeHtml(primaryConsoleMessage(report))}</p>
           <p>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} returned ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</p>
         </div>
       </section>
@@ -916,7 +917,7 @@ function renderReportHtml(
             <div class="evidence-row"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
             <div class="evidence-row"><span>Target repo</span><strong>${escapeHtml(report.repo)}</strong></div>
             <div class="evidence-row"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
-            <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(report.console[0]?.message || 'No console error captured')}</strong></div>
+            <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(primaryConsoleMessage(report))}</strong></div>
             <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
           </div>
         </section>
@@ -1298,11 +1299,18 @@ function firstSentence(value: string): string {
 }
 
 function currentReportReceipt(report: LiteReport): string {
-  const consoleMessage = report.console[0]?.message ?? 'no console error captured';
+  const consoleMessage = primaryConsoleMessage(report);
   const network = report.network[0]
     ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}`
     : 'no network breadcrumb captured';
   return `${report.route}; ${consoleMessage}; ${network}; annotation ${report.annotation.target || 'not selected'}.`;
+}
+
+function primaryConsoleMessage(report: LiteReport): string {
+  return report.console.find((entry) => entry.level === 'error')?.message
+    ?? report.console.find((entry) => entry.level === 'warn')?.message
+    ?? report.console[0]?.message
+    ?? 'No console error captured';
 }
 
 function summarizeStoredAutofix(autofix: unknown): {

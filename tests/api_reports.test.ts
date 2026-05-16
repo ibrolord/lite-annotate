@@ -238,3 +238,49 @@ test('POST /reports/:id/repo updates the Auto-Fix target repo shown on the repor
   });
   assert.equal(invalid.status, 400);
 });
+
+test('report view shows the first error-level console event instead of startup logs', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  fixture.console = [
+    {
+      level: 'log',
+      message: '[cedar-and-sail] Lite Annotate widget loaded http://localhost:3002/widget.js',
+      timestamp: '2026-05-16T12:00:00.000Z',
+      source: 'console',
+    },
+    {
+      level: 'error',
+      message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name')",
+      timestamp: '2026-05-16T12:00:01.000Z',
+      source: 'console',
+    },
+  ];
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-view-error-'));
+  const oldMemoryDir = process.env.MEMORY_DIR;
+  const oldProvider = process.env.MEMORY_PROVIDER;
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  const app = createApp({
+    store: new ReportStore(join(root, 'reports')),
+    memory: createMemoryAdapter(),
+  });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const postBody = await post.json();
+
+    const view = await app.request(`/reports/${postBody.reportId}/view`);
+    const html = await view.text();
+    assert.match(html, /Browser error<\/span><strong>\[cedar-and-sail\] loyalty profile crashed TypeError/);
+    assert.doesNotMatch(html, /Browser error<\/span><strong>\[cedar-and-sail\] Lite Annotate widget loaded/);
+  } finally {
+    if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = oldMemoryDir;
+    if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
+    else process.env.MEMORY_PROVIDER = oldProvider;
+  }
+});

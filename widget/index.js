@@ -246,13 +246,13 @@
       'width:26px',
       'height:26px',
       'border-radius:50%',
-      'background:oklch(0.52 0.19 28)',
-      'color:oklch(0.98 0.006 248)',
+      'background:#dc2626',
+      'color:#f8fafc',
       'display:flex',
       'align-items:center',
       'justify-content:center',
       'font:700 13px/1 system-ui,sans-serif',
-      'box-shadow:0 6px 18px oklch(0.52 0.19 28 / .35)',
+      'box-shadow:0 6px 18px rgba(220,38,38,.35)',
       'pointer-events:none',
     ].join(';'));
     annotationMarker.textContent = '1';
@@ -267,9 +267,9 @@
         `width:${annotation.elementRect.width}px`,
         `height:${annotation.elementRect.height}px`,
         'z-index:99997',
-        'border:2px solid oklch(0.52 0.19 28)',
+        'border:2px solid #dc2626',
         'border-radius:6px',
-        'box-shadow:0 0 0 3px oklch(0.52 0.19 28 / .14)',
+        'box-shadow:0 0 0 3px rgba(220,38,38,.14)',
         'pointer-events:none',
       ].join(';'));
       annotationHighlight.setAttribute('data-lite-annotate-highlight', 'true');
@@ -322,12 +322,12 @@
       'left:50%',
       'transform:translateX(-50%)',
       'z-index:100000',
-      'background:oklch(0.21 0.018 248)',
-      'color:oklch(0.98 0.006 248)',
+      'background:#1f2937',
+      'color:#f8fafc',
       'padding:10px 14px',
       'border-radius:8px',
       'font:500 13px system-ui,sans-serif',
-      'box-shadow:0 8px 24px oklch(0.25 0.02 248 / .18)',
+      'box-shadow:0 8px 24px rgba(31,41,55,.18)',
       'pointer-events:none',
     ].join(';'));
     banner.textContent = 'Click anywhere to pin this bug. Press Esc to cancel.';
@@ -462,9 +462,9 @@
     const button = el('button', [
       'position:fixed', 'bottom:24px', 'right:24px', 'z-index:99999',
       'min-width:112px', 'height:46px', 'border-radius:999px',
-      'background:oklch(0.51 0.17 258)', 'color:oklch(0.98 0.006 248)', 'border:none',
+      'background:#2563eb', 'color:#f8fafc', 'border:none',
       'cursor:pointer', 'font-size:14px', 'font-weight:700',
-      'box-shadow:0 10px 26px oklch(0.31 0.08 258 / .28)',
+      'box-shadow:0 10px 26px rgba(37,99,235,.28)',
     ].join(';'));
     button.textContent = 'Report bug';
     button.setAttribute('data-lite-annotate-launcher', 'true');
@@ -484,49 +484,49 @@
 
       popover = el('div', [
         'position:fixed', 'bottom:84px', 'right:24px', 'z-index:99999',
-        'background:oklch(0.998 0.004 248)', 'border:1px solid oklch(0.89 0.012 248)', 'border-radius:8px',
+        'background:#ffffff', 'border:1px solid #d1d5db', 'border-radius:8px',
         'padding:20px', 'width:320px',
-        'box-shadow:0 18px 40px oklch(0.31 0.03 248 / .16)',
-        'font-family:system-ui,sans-serif', 'color:oklch(0.21 0.018 248)',
+        'box-shadow:0 18px 40px rgba(31,41,55,.16)',
+        'font-family:system-ui,sans-serif', 'color:#1f2937',
       ].join(';'));
       popover.setAttribute('data-lite-annotate-popover', 'true');
 
       const heading = el('div', 'font-weight:700;font-size:15px;margin-bottom:6px;');
       heading.textContent = 'Report a bug';
-      const helper = el('div', 'font-size:12px;line-height:1.45;color:oklch(0.46 0.022 248);margin-bottom:12px;');
+      const helper = el('div', 'font-size:12px;line-height:1.45;color:#64748b;margin-bottom:12px;');
       helper.textContent = 'Captures route, console, network, session, screenshot, and annotation.';
 
       const titleInput = el('input',
-        'width:100%;padding:9px;border:1px solid oklch(0.82 0.018 248);border-radius:6px;font-size:14px;box-sizing:border-box;margin-bottom:10px;color:oklch(0.21 0.018 248);background:oklch(0.985 0.006 248);',
+        'width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;box-sizing:border-box;margin-bottom:10px;color:#1f2937;background:#f8fafc;',
         { placeholder: "What's broken?" }
       );
 
       const descInput = el('textarea',
-        'width:100%;padding:9px;border:1px solid oklch(0.82 0.018 248);border-radius:6px;font-size:14px;box-sizing:border-box;resize:none;margin-bottom:12px;color:oklch(0.21 0.018 248);background:oklch(0.985 0.006 248);',
+        'width:100%;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;box-sizing:border-box;resize:none;margin-bottom:12px;color:#1f2937;background:#f8fafc;',
         { placeholder: 'Any extra details...', rows: 3 }
       );
 
       const annotateButton = el('button',
-        'width:100%;padding:10px;background:oklch(0.998 0.004 248);color:oklch(0.21 0.018 248);border:1px solid oklch(0.82 0.018 248);border-radius:6px;font-size:14px;cursor:pointer;font-weight:650;margin-bottom:10px;'
+        'width:100%;padding:10px;background:#ffffff;color:#1f2937;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;cursor:pointer;font-weight:650;margin-bottom:10px;'
       );
       annotateButton.textContent = 'Annotate Page';
 
       const cancelAnnotationButton = el('button',
-        'display:none;width:100%;padding:10px;background:oklch(0.955 0.012 248);color:oklch(0.32 0.026 248);border:1px solid oklch(0.82 0.018 248);border-radius:6px;font-size:14px;cursor:pointer;font-weight:650;margin:-2px 0 10px;'
+        'display:none;width:100%;padding:10px;background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;cursor:pointer;font-weight:650;margin:-2px 0 10px;'
       );
       cancelAnnotationButton.textContent = 'Cancel annotation';
       cancelAnnotationButton.disabled = true;
 
-      const annotationStatus = el('div', 'margin:-2px 0 10px;font-size:12px;color:oklch(0.46 0.022 248);');
+      const annotationStatus = el('div', 'margin:-2px 0 10px;font-size:12px;color:#64748b;');
       annotationStatus.textContent = 'No page annotation pinned yet.';
       annotationStatusElement = annotationStatus;
 
       const submitButton = el('button',
-        'width:100%;padding:11px;background:oklch(0.51 0.17 258);color:oklch(0.98 0.006 248);border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:700;'
+        'width:100%;padding:11px;background:#2563eb;color:#f8fafc;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:700;'
       );
       submitButton.textContent = 'Submit Report';
 
-      const status = el('div', 'margin-top:9px;font-size:13px;color:oklch(0.46 0.022 248);text-align:center;word-break:break-word;');
+      const status = el('div', 'margin-top:9px;font-size:13px;color:#64748b;text-align:center;word-break:break-word;');
 
       popover.appendChild(heading);
       popover.appendChild(helper);

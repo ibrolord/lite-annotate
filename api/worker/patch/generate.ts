@@ -33,7 +33,7 @@ function missingObjectFallback(variableName: string): string {
   return `${label.charAt(0).toUpperCase()}${label.slice(1).toLowerCase()} not found`;
 }
 
-function generateMissingObjectGuard(content: string): string | null {
+function generateMissingObjectGuard(content: string): { patched?: string; alreadyGuarded?: boolean } | null {
   const lines = content.split('\n');
   const lookupIndex = lines.findIndex((line) =>
     /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:get|find|load|fetch)[A-Za-z0-9_$]*\s*\(/.test(line)
@@ -42,7 +42,8 @@ function generateMissingObjectGuard(content: string): string | null {
 
   const lookupMatch = lines[lookupIndex]?.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
   const variableName = lookupMatch?.[1];
-  if (!variableName || guardAlreadyExists(content, variableName)) return null;
+  if (!variableName) return null;
+  if (guardAlreadyExists(content, variableName)) return { alreadyGuarded: true };
 
   const remainder = lines.slice(lookupIndex + 1).join('\n');
   const dereferencesVariable = new RegExp(`\\b${variableName}\\.[A-Za-z_$][\\w$]*\\b`).test(remainder);
@@ -54,7 +55,7 @@ function generateMissingObjectGuard(content: string): string | null {
     `${indent}if (!${variableName}) return '${missingObjectFallback(variableName)}';`,
     ...lines.slice(lookupIndex + 1),
   ];
-  return patched.join('\n');
+  return { patched: patched.join('\n') };
 }
 
 function requestedButtonColor(diagnosis: Diagnosis): { value: string; hoverValue: string; label: string } | null {
@@ -124,12 +125,30 @@ export function generatePatchFromDiagnosis(
   }
 
   const files: StructuredPatchFile[] = [];
+  const alreadyGuarded: string[] = [];
   for (const candidate of targetCandidates(diagnosis, candidates)) {
-    const patched = /\.(?:s?css)$/i.test(candidate.path)
-      ? generateButtonColorPatch(diagnosis, candidate.file.content)
-      : generateMissingObjectGuard(candidate.file.content);
-    if (!patched || patched === candidate.file.content) continue;
-    files.push({ path: candidate.path, content: patched });
+    if (/\.(?:s?css)$/i.test(candidate.path)) {
+      const patched = generateButtonColorPatch(diagnosis, candidate.file.content);
+      if (!patched || patched === candidate.file.content) continue;
+      files.push({ path: candidate.path, content: patched });
+      continue;
+    }
+
+    const result = generateMissingObjectGuard(candidate.file.content);
+    if (result?.alreadyGuarded) {
+      alreadyGuarded.push(candidate.path);
+      continue;
+    }
+    if (!result?.patched || result.patched === candidate.file.content) continue;
+    files.push({ path: candidate.path, content: result.patched });
+  }
+
+  if (files.length === 0 && alreadyGuarded.length > 0) {
+    return {
+      ok: true,
+      files: [],
+      error: `No patch needed: ${alreadyGuarded.join(', ')} already contains a missing-object guard.`,
+    };
   }
 
   if (files.length === 0) {
