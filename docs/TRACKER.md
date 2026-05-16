@@ -69,12 +69,13 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `gstack-runner-2026-05-16` | GStack Runner / Safety | Added protected remote GStack runner integration | Ready for deploy setup | `npm run typecheck`; `npm test` 37/37; runner health smoke on `localhost:3025`; trigger requires `GSTACK_TRIGGER_TOKEN`; non-PR runner jobs strip write GitHub credentials; callbacks strip raw logs; report updates serialize per report |
 | `gstack-runner-stdio-2026-05-16` | GStack Runner / Safety | Ignored runner child stdin explicitly | Done | Uses Node `stdio` option so spawned Claude/Git processes cannot hang on inherited stdin |
 | `gstack-trigger-token-2026-05-16` | GStack Runner / Safety | Made missing trigger token fail closed | Done | `npm test` 39/39; unauthenticated GStack trigger must return 503 when `GSTACK_TRIGGER_TOKEN` is absent |
-| `report-repo-callback-retry-2026-05-16` | Person B / GStack Runner | Preferred report repo and retried runner callbacks | Done | Autofix uses report-scoped repo over hosted env defaults; runner persists failed results and retries Lite Annotate callbacks before marking callback failure |
+| `report-repo-callback-retry-2026-05-16` | Person B / GStack Runner | Preferred report repo and retried runner callbacks | Done | Autofix uses report-scoped repo over hosted env defaults when the repo is trusted; runner persists failed results and retries Lite Annotate callbacks before marking callback failure |
 | `gstack-mode-stack-ranking-2026-05-16` | GStack Runner / Ranking | Preserved runner mode and stack-frame evidence | Done | `npm run typecheck`; `npm test` 45/45; callbacks keep review mode, code ranking reads console stack fields and prioritizes first stack frame |
 | `hosted-gstack-review-2026-05-16` | GStack Runner / Deploy | Ran authorized hosted GStack runner review | Done | Railway deployment `7a1e00bc-404a-4e94-8974-a03e476e7de4`; unauthenticated trigger returns 401; authorized job `gstack_84508758-0dbd-493d-aaf3-3867b6e31b69` returned `passed` and replaced the stale queued record |
 | `model-backed-autofix-2026-05-16` | Person B / Auto-Fix | Added model-backed patch generation with HTML/CSS file finding | Done | `npm run typecheck`; `npm test` 48/48; `git diff --check`; real ecommerce repo ranking returns `index.html` and `src/styles.css` as top targets before model patching |
 | `autofix-generic-pr-gates-2026-05-16` | Person B / Auto-Fix | Removed demo-specific default smoke checks | Done | `npm run typecheck`; focused Auto-Fix/verification/PR-gate tests; CSS patches now get generic syntax verification and PR gate refuses patches with no recorded verification checks |
 | `hosted-gbrain-embeddings-2026-05-16` | Person A / Memory | Enabled hosted GBrain OpenAI embedding provider and parsed hosted text search hits | Done | GBrain deployment `363b8751-c562-4f31-a794-f0e4df239d96`; `/health` returns `0.35.1.0` on Postgres; OAuth metadata returns `client_credentials`; `gbrain providers list` shows `openai` ready; `gbrain embed --stale` embedded 23 chunks across 15 pages; direct search returns `bugs/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430` at score `1.0000`; `tests/memory.test.ts` covers hosted text search parsing |
+| `autofix-trusted-pr-gates-2026-05-16` | Person B / Auto-Fix | Hardened model and PR trust gates | Done | `npm run typecheck`; `npm test` 67/67; `git diff --check`; report repos must match server allowlist or configured repo before credentialed PRs; model fallback cannot upgrade an unpatchable diagnosis; TS/TSX patches record sanity checks; PR base branch matches verified checkout branch |
 
 ## Gates
 
@@ -90,9 +91,9 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | Repo indexing | Out of scope | Pass locally |
 | Candidate ranking | Out of scope | Pass locally |
 | Diagnosis | Out of scope | Pass locally |
-| Patch generation | Out of scope | Pass locally; uses configured OpenAI coding model when deterministic scoped patching cannot safely produce a change |
-| Temp clone verification | Out of scope | Pass locally; PR gate requires at least one recorded verification check |
-| GitHub PR | Out of scope | Pass; hosted credentialed PR opened at https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 |
+| Patch generation | Out of scope | Pass locally; uses configured OpenAI coding model only after diagnosis already marks the report patchable |
+| Temp clone verification | Out of scope | Pass locally; PR gate requires at least one recorded verification check, with JS/CSS/HTML/TS sanity coverage plus optional repo package scripts |
+| GitHub PR | Out of scope | Pass; hosted credentialed PR opened at https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 and ecommerce proofs opened PRs #5/#6; credentialed PR mode requires a trusted repo allowlist/configured repo |
 
 ## Tracker Rules
 

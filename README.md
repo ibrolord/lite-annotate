@@ -194,6 +194,7 @@ GITHUB_TOKEN=<token with repo access>
 GITHUB_REPO=<owner/repo used for PR creation>
 TARGET_REPO=<owner/repo or URL used for repo cloning>
 TARGET_REPO_BRANCH=<optional branch>
+AUTOFIX_ALLOWED_REPOS=<comma-separated owner/repo allowlist for report-provided repos>
 REPO_WORKSPACE_ROOT=<optional clone/cache root>
 
 PUBLIC_BASE_URL=https://<lite-annotate-host>
@@ -206,7 +207,8 @@ GSTACK_CALLBACK_BASE_URL=https://<callback-host>
 GSTACK_ALLOW_PR=1
 ```
 
-The worker treats the target repository as the source of truth for file contents. Memory improves retrieval and review context, but patch generation still depends on scoped diagnosis and local verification.
+The worker uses the target repository as the source of truth for file contents. Memory improves context and retrieval, but PR generation still depends on scoped diagnosis and local verification.
+For hosted PR creation, report-provided repository values must match `AUTOFIX_ALLOWED_REPOS`, `TARGET_REPO`, or `GITHUB_REPO`; otherwise Auto-Fix fails closed instead of opening a PR against an untrusted repo.
 
 ## Documentation
 
@@ -225,5 +227,6 @@ Historical planning notes live under `docs/` and are not required for product in
 - Do not run arbitrary customer commands in the worker.
 - Do not dump entire repositories into model context.
 - Treat diagnosis as a required step before patching.
+- Trust report-provided repositories only when they match the server-side allowlist.
 - Open PRs only after scoped patch application and verification pass.
 - Label fallback memory honestly when native GBrain is not configured.

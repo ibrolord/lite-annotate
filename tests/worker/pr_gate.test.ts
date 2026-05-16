@@ -102,6 +102,29 @@ test('openVerifiedPR opens PR only after all Person B gates pass and includes ev
   assert.match(payload.body, /User not found/);
 });
 
+test('openVerifiedPR carries the verified base branch into PR creation', async () => {
+  let payloadBaseBranch: string | undefined;
+  const result = await openVerifiedPR({
+    pipeline: basePipelineResult(),
+    report: { id: 'bug_123', title: 'User profile crashes reading name' },
+    repoUrl: 'https://github.com/ibrolord/lite-annotate-demo',
+    token: 'ghs_test',
+    baseBranch: 'release/candidate',
+    createPR: async (input) => {
+      payloadBaseBranch = input.payload.baseBranch;
+      return {
+        pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/2',
+        branch: input.payload.branch,
+        files: input.payload.files.map((file) => file.path),
+        write_mode: 'direct_files',
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(payloadBaseBranch, 'release/candidate');
+});
+
 test('openVerifiedPR refuses to call GitHub when verification failed', async () => {
   const pipeline = basePipelineResult();
   pipeline.verification = {

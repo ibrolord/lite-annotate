@@ -61,6 +61,10 @@ function isJavaScriptPath(path: string): boolean {
   return /\.(?:cjs|mjs|js|jsx)$/i.test(path);
 }
 
+function isTypeScriptPath(path: string): boolean {
+  return /\.(?:ts|tsx)$/i.test(path);
+}
+
 function isCssPath(path: string): boolean {
   return /\.(?:css|scss)$/i.test(path);
 }
@@ -109,6 +113,14 @@ function validateHtml(path: string, content: string): string {
   assertNoConflictMarkers(path, content);
   checkBalancedDelimiters(path, content, '<', '>');
   return 'HTML sanity check passed';
+}
+
+function validateTypeScript(path: string, content: string): string {
+  assertNoConflictMarkers(path, content);
+  checkBalancedDelimiters(path, content, '{', '}');
+  checkBalancedDelimiters(path, content, '(', ')');
+  checkBalancedDelimiters(path, content, '[', ']');
+  return 'TypeScript sanity check passed';
 }
 
 function runCommand(cwd: string, command: VerificationCommandInput, displayName?: string): VerificationCommandResult {
@@ -200,6 +212,16 @@ export function verifyStructuredPatch(input: StructuredPatchVerificationInput): 
       { command: process.execPath, args: ['--check', file] },
       `node --check ${file}`
     );
+    commands.push(result);
+    if (!result.ok) {
+      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+    }
+  }
+
+  for (const file of modifiedFiles.filter(isTypeScriptPath)) {
+    const absolutePath = resolveInside(workspacePath, file);
+    const content = absolutePath ? readFileSync(absolutePath, 'utf8') : '';
+    const result = inlineCheck(`typescript sanity ${file}`, () => validateTypeScript(file, content));
     commands.push(result);
     if (!result.ok) {
       return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
