@@ -61,6 +61,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `c277cd9` | Shared / Memory | Documented the cold-vs-memory demo story | Done | Added `docs/GBRAIN_DEMO_STORY.md` and linked demo narrative |
 | `d057d1d` | Deploy | Added Vercel deployment adapter | Done | Added `api/vercel.ts` and `vercel.json`; Railway path remains available |
 | `ac5a599` | Shared / Memory | Restored native GBrain HTTP helper utilities | Done | `api/gbrain.ts` supports native MCP helpers on `master` |
+| `af0b0fa` | Shared / Memory | Added native GBrain MCP adapter tests and setup docs | Done | `npm test`; `npm run typecheck`; fake MCP server covers OAuth, native write/search, and markdown fallback |
 
 ## Gates
 
