@@ -55,7 +55,19 @@ function reportText(report: ReportLike): string {
 }
 
 function hasVisualLayoutSignal(report: ReportLike): boolean {
-  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i.test(reportText(report));
+  const userIntentText = [
+    report.title,
+    report.description,
+    report.annotation?.target,
+    report.annotation?.selector,
+    report.annotation?.description,
+    ...(report.session ?? []).map((entry) => entry.target),
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const visualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i;
+  const strongVisualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|color|colour|background/i;
+  return strongVisualSignal.test(userIntentText) || visualSignal.test(reportText(report));
 }
 
 function requestedColor(report: ReportLike): string | null {
@@ -180,28 +192,34 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   if (styleLine) evidence.push(`Code: ${top.path} includes visual target ${styleLine}`);
   if (report.route) evidence.push(`Route: ${report.route}`);
 
-  const confidence = clampConfidence(
-    (visualLayout ? 0.52 : 0.45) +
-      (top.score >= 300 ? 0.15 : 0) +
-      (missingProperty ? 0.15 : 0) +
-      (propertyRead ? 0.12 : 0) +
-      (visualLayout && styleLine ? 0.11 : 0) +
-      (color && /\.(?:s?css)$/i.test(top.path) ? 0.1 : 0)
-  );
-
   const targetFiles = visualLayout
     ? (color
         ? candidates.filter((candidate) => /\.(?:s?css)$/i.test(candidate.path)).slice(0, 1)
         : candidates.filter((candidate) => /\.(?:html|s?css|jsx|tsx)$/i.test(candidate.path)).slice(0, MAX_TARGET_FILES)
       ).map((candidate) => candidate.path)
     : [top.path];
+  if (visualLayout && targetFiles.length > 0 && !targetFiles.includes(top.path)) {
+    evidence.push(`Code: ${targetFiles.join(', ')} selected as the visual target file.`);
+  }
+  const hasVisualStyleTarget = visualLayout && targetFiles.some((path) => /\.(?:s?css)$/i.test(path));
+
+  const confidence = clampConfidence(
+    (visualLayout ? 0.52 : 0.45) +
+      (top.score >= 300 ? 0.15 : 0) +
+      (missingProperty ? 0.15 : 0) +
+      (propertyRead ? 0.12 : 0) +
+      (visualLayout && styleLine ? 0.11 : 0) +
+      (color && hasVisualStyleTarget ? 0.21 : 0)
+  );
 
   const rootCause = property && propertyRead && guardedCurrentCode
     ? `${top.path} is the stack-frame source for the reported missing-record crash, and the current repo already guards the missing record before reading ${property}.`
     : property && propertyRead
       ? `${top.path} dereferences a lookup result's ${property} property before confirming the record exists.`
       : visualLayout
-        ? `${top.path} is the highest-ranked UI file for a visual layout report, and the pinned page evidence points to nearby markup or styles.`
+        ? targetFiles.length > 0 && !targetFiles.includes(top.path)
+          ? `${targetFiles.join(', ')} is the stylesheet target for the visual report. ${top.path} came from a noisy stack trace and is kept as context.`
+          : `${top.path} is the highest-ranked UI file for a visual layout report, and the pinned page evidence points to nearby markup or styles.`
         : `${top.path} is the highest-ranked source file for the report, but the exact failing dereference needs more evidence.`;
 
   const diagnosis: Diagnosis = {

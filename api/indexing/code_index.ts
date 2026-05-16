@@ -354,9 +354,23 @@ function annotationPhrases(report: ReportLike): string[] {
 }
 
 function isVisualLayoutReport(report: ReportLike): boolean {
+  const userIntentText = [
+    report.title,
+    report.description,
+    report.annotation?.target,
+    report.annotation?.selector,
+    report.annotation?.description,
+    ...(report.session ?? []).map((entry) => entry.target),
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const visualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i;
+  const strongVisualSignal = /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|color|colour|background/i;
+  if (strongVisualSignal.test(userIntentText)) return true;
+
   const text = reportText(report);
   if (/cannot read properties? of undefined|cannot read property|typeerror|referenceerror/i.test(text)) return false;
-  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i.test(text);
+  return visualSignal.test(text);
 }
 
 function isStylePath(path: string): boolean {

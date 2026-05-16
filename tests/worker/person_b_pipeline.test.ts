@@ -205,7 +205,7 @@ test('runPersonBPipeline does not let the model upgrade an unpatchable diagnosis
   }
 });
 
-test('runPersonBPipeline does not fast-patch noisy color reports without patchable diagnosis', async () => {
+test('runPersonBPipeline honors explicit color reports despite noisy console stacks', async () => {
   const root = makeRepo();
   try {
     let called = false;
@@ -238,14 +238,37 @@ test('runPersonBPipeline does not fast-patch noisy color reports without patchab
       ],
       codePatchGenerator: async () => {
         called = true;
-        return { ok: false, source: 'llm', files: [], error: 'should not be called for bounded color patch' };
+        return {
+          ok: true,
+          source: 'llm',
+          files: [
+            {
+              path: 'src/styles.css',
+              content: `.hero {
+  display: grid;
+}
+
+.hero-copy h1 {
+  font-size: clamp(44px, 7vw, 86px);
+  line-height: 0.95;
+}
+
+.button-primary {
+  background: #7c3aed;
+}
+`,
+            },
+          ],
+        };
       },
     });
 
-    assert.equal(called, false);
-    assert.equal(result.diagnosis.shouldPatch, false);
-    assert.equal(result.patch.ok, false);
-    assert.equal(result.verification, null);
+    assert.equal(called, true);
+    assert.equal(result.diagnosis.shouldPatch, true);
+    assert.deepEqual(result.diagnosis.targetFiles, ['src/styles.css']);
+    assert.match(result.diagnosis.rootCause, /noisy stack trace/);
+    assert.equal(result.patch.ok, true);
+    assert.equal(result.verification?.ok, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
