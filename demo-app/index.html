@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Acme App — User Dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 60px auto; padding: 0 24px; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    p { color: #6b7280; margin-bottom: 24px; }
+    button { padding: 10px 20px; background: #000; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; }
+    button:hover { background: #333; }
+    #output { margin-top: 20px; font-size: 18px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <h1>User Dashboard</h1>
+  <p>Welcome back. View your profile below.</p>
+  <button onclick="loadUser()">Load User Profile</button>
+  <div id="output"></div>
+
+  <script>
+    // THE BUG: find() returns undefined when user id doesn't match
+    // accessing .name on undefined throws TypeError
+    function loadUser() {
+      const users = [{ id: 1, name: 'Alice', role: 'Admin' }];
+      const user = users.find(u => u.id === 2); // always undefined — bug
+      document.getElementById('output').textContent = 'Welcome, ' + user.name;
+    }
+  </script>
+
+  <!-- html2canvas for screenshot capture -->
+  <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+
+  <!-- Lite Annotate widget -->
+  <script src="../widget/index.js"></script>
+</body>
+</html>
