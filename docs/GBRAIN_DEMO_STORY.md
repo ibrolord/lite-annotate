@@ -56,9 +56,11 @@ https://lite-annotate-production.up.railway.app/reports/dashboard
 - Verification: checks that passed.
 - Outcome memory: diagnosis and verification result written back.
 
-6. Run analysis from the report view.
+6. Run **Dry run analysis** from the report view first. This proves diagnosis and verification without opening a public PR.
 
 7. Refresh the same report view and show that receipts now include code evidence and verification.
+
+8. Only run the normal **Run analysis** action when the demo is ready to open a GitHub PR.
 
 ## Honest Framing
 
@@ -76,6 +78,7 @@ write memory -> retrieve similar memory -> use it in handoff -> write diagnosis/
 - `/reports/:id/handoff` returns the same structured demo context.
 - `/reports/:id/view` renders Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts.
 - `POST /reports/:id/autofix` stores analysis output with memory impact, comparison, and receipts.
+- `POST /reports/:id/autofix?dryRun=1` verifies analysis while suppressing PR creation.
 - The pinned demo has deterministic prior memory so the hackathon demo works even without hosted native GBrain.
 
 ## Next Upgrade

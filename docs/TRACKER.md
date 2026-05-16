@@ -8,21 +8,22 @@ Source of truth for Person A / Person B ownership, current status, and commit-le
 
 | Lane | Owner scope | Status | Current proof | Next action |
 | --- | --- | --- | --- | --- |
-| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a14c55c4-8b49-4a53-991d-e2e787490eaa`; Railway deployment `cb881adf-7336-4571-af21-96ad2c3c653f`; `/reports/dashboard` shows context and handoff | Keep tracker updated if capture/report contract changes |
-| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; hosted `GET /reports/:id/autofix` returns stored Person B result slot; memory impact panel implemented locally in `3cf15f7`; cold-vs-memory receipts implemented locally in `a9982a7` | Run hosted `POST /reports/:id/autofix` with target repo and GitHub credentials configured |
+| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; native GBrain memory write confirmed; `/reports/dashboard` shows current hosted report | Keep tracker updated if capture/report contract changes |
+| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; hosted handoff exposes Memory Impact, Cold Agent vs Memory Agent, and Memory Receipts for `bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430`; dry-run analysis implemented locally in `0dc53f6` | Deploy `0dc53f6`, then run hosted `POST /reports/:id/autofix?dryRun=1`; run normal autofix only when PR opening is approved |
 
 ## Person B Start Packet
 
 Person B should be able to start with only:
 
 ```text
-reportId: bug_a14c55c4-8b49-4a53-991d-e2e787490eaa
+reportId: bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430
 repo: ibrolord/lite-annotate-demo
-normalized report JSON: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa
-memory search result: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/memory
-handoff payload: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/handoff
-autofix result: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/autofix
-autofix trigger: POST /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/autofix
+normalized report JSON: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430
+memory search result: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/memory
+handoff payload: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/handoff
+autofix result: GET /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/autofix
+autofix dry-run trigger: POST /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/autofix?dryRun=1
+autofix PR trigger: POST /reports/bug_a6e7b9a7-4dd9-417d-bd2e-b692463c0430/autofix
 dashboard: https://lite-annotate-production.up.railway.app/reports/dashboard
 ```
 
@@ -62,6 +63,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `d057d1d` | Deploy | Added Vercel deployment adapter | Done | Added `api/vercel.ts` and `vercel.json`; Railway path remains available |
 | `ac5a599` | Shared / Memory | Restored native GBrain HTTP helper utilities | Done | `api/gbrain.ts` supports native MCP helpers on `master` |
 | `af0b0fa` | Shared / Memory | Added native GBrain MCP adapter tests and setup docs | Done | `npm test`; `npm run typecheck`; fake MCP server covers OAuth, native write/search, and markdown fallback |
+| `0dc53f6` | Shared / Validation | Added dry-run analysis mode | Done | `npm test`; `npm run typecheck`; `?dryRun=1` verifies without opening a PR |
 
 ## Gates
 
