@@ -12,6 +12,7 @@
   let selectedAnnotation = null;
   let annotationMarker = null;
   let annotationHighlight = null;
+  let cancelAnnotationMode = null;
 
   function now() {
     return new Date().toISOString();
@@ -183,6 +184,10 @@
 
   function recordRouteChange(type) {
     recordSession(type, null, { route: currentRoute() });
+    if (selectedAnnotation && selectedAnnotation.route !== currentRoute()) {
+      selectedAnnotation = null;
+      removeAnnotationChrome();
+    }
   }
 
   ['pushState', 'replaceState'].forEach((name) => {
@@ -283,8 +288,13 @@
     return annotation;
   }
 
-  function startAnnotationMode(status, popover, button) {
+  function startAnnotationMode(status, popover, button, cancelButton) {
+    cancelActiveAnnotationMode();
     status.textContent = 'Click the broken area on the page.';
+    if (cancelButton) {
+      cancelButton.style.display = 'block';
+      cancelButton.disabled = false;
+    }
     const previousCursor = document.documentElement.style.cursor;
     document.documentElement.style.cursor = 'crosshair';
 
@@ -302,8 +312,31 @@
       'box-shadow:0 8px 24px rgba(0,0,0,0.18)',
       'pointer-events:none',
     ].join(';'));
-    banner.textContent = 'Click anywhere to pin this bug';
+    banner.textContent = 'Click anywhere to pin this bug. Press Esc to cancel.';
     document.body.appendChild(banner);
+
+    let done = false;
+    const cleanup = (message) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener('click', finish, true);
+      window.removeEventListener?.('keydown', handleKeydown, true);
+      document.documentElement.style.cursor = previousCursor;
+      banner.remove();
+      if (cancelButton) {
+        cancelButton.style.display = 'none';
+        cancelButton.disabled = true;
+      }
+      if (cancelAnnotationMode === cleanup) cancelAnnotationMode = null;
+      if (message) status.textContent = message;
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      cleanup('Annotation cancelled.');
+    };
 
     const finish = (event) => {
       if (event.target === button || event.target === popover || (popover.contains && popover.contains(event.target))) {
@@ -312,14 +345,23 @@
       event.preventDefault?.();
       event.stopPropagation?.();
       event.stopImmediatePropagation?.();
-      document.removeEventListener('click', finish, true);
-      document.documentElement.style.cursor = previousCursor;
-      banner.remove();
+      cleanup();
       const annotation = captureAnnotation(event);
       status.textContent = `Pinned ${annotation.target}`;
     };
 
-    setTimeout(() => document.addEventListener('click', finish, true), 0);
+    cancelAnnotationMode = cleanup;
+    setTimeout(() => {
+      if (done) return;
+      document.addEventListener('click', finish, true);
+      window.addEventListener?.('keydown', handleKeydown, true);
+    }, 0);
+  }
+
+  function cancelActiveAnnotationMode(message = 'Annotation cancelled.') {
+    if (!cancelAnnotationMode) return false;
+    cancelAnnotationMode(message);
+    return true;
   }
 
   async function captureScreenshot() {
@@ -378,6 +420,7 @@
     let popover = null;
 
     button.addEventListener('click', () => {
+      cancelActiveAnnotationMode();
       if (popover) {
         popover.remove();
         popover = null;
@@ -410,6 +453,12 @@
       );
       annotateButton.textContent = 'Annotate Page';
 
+      const cancelAnnotationButton = el('button',
+        'display:none;width:100%;padding:9px;background:#f9fafb;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-size:14px;cursor:pointer;font-weight:500;margin:-2px 0 10px;'
+      );
+      cancelAnnotationButton.textContent = 'Cancel annotation';
+      cancelAnnotationButton.disabled = true;
+
       const annotationStatus = el('div', 'margin:-2px 0 10px;font-size:12px;color:#6b7280;');
       annotationStatus.textContent = 'No page annotation pinned yet.';
 
@@ -424,16 +473,22 @@
       popover.appendChild(titleInput);
       popover.appendChild(descInput);
       popover.appendChild(annotateButton);
+      popover.appendChild(cancelAnnotationButton);
       popover.appendChild(annotationStatus);
       popover.appendChild(submitButton);
       popover.appendChild(status);
       document.body.appendChild(popover);
 
       annotateButton.addEventListener('click', () => {
-        startAnnotationMode(annotationStatus, popover, button);
+        startAnnotationMode(annotationStatus, popover, button, cancelAnnotationButton);
+      });
+
+      cancelAnnotationButton.addEventListener('click', () => {
+        cancelActiveAnnotationMode();
       });
 
       submitButton.addEventListener('click', async () => {
+        cancelActiveAnnotationMode('');
         const title = titleInput.value.trim();
         if (!title) {
           status.textContent = 'Please enter a title.';

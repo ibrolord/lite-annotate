@@ -61,6 +61,64 @@ test('widget captures browser breadcrumbs and submits the Person A payload shape
   assert.equal(payload.screenshot.reason, 'html2canvas_unavailable');
 });
 
+test('widget can cancel annotation mode before submitting', async () => {
+  const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
+  const submitted: any[] = [];
+  const context = createBrowserContext(submitted);
+
+  vm.runInNewContext(script, context);
+
+  const launcher = context.document.body.children.find((child: any) => child.getAttribute('data-lite-annotate-launcher') === 'true');
+  assert.ok(launcher);
+  await launcher.dispatchEvent({ type: 'click', target: launcher });
+
+  const popover = context.document.body.children.find((child: any) => child !== launcher);
+  const titleInput = popover.children.find((child: any) => child.tagName === 'INPUT');
+  const annotate = popover.children.find((child: any) => child.textContent === 'Annotate Page');
+  const cancel = popover.children.find((child: any) => child.textContent === 'Cancel annotation');
+  const annotationStatus = popover.children.find((child: any) => child.textContent === 'No page annotation pinned yet.');
+  const submit = popover.children.find((child: any) => child.textContent === 'Submit Report');
+
+  titleInput.value = 'Cancelled annotation report';
+  await annotate.dispatchEvent({ type: 'click', target: annotate });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(cancel.disabled, false);
+  assert.equal(cancel.style.display, 'block');
+
+  context.window.dispatchEvent({
+    type: 'keydown',
+    key: 'Escape',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(cancel.disabled, true);
+  assert.equal(cancel.style.display, 'none');
+  assert.equal(annotationStatus.textContent, 'Annotation cancelled.');
+
+  await annotate.dispatchEvent({ type: 'click', target: annotate });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await cancel.dispatchEvent({ type: 'click', target: cancel });
+  assert.equal(cancel.disabled, true);
+  assert.equal(annotationStatus.textContent, 'Annotation cancelled.');
+
+  context.document.dispatchEvent({
+    type: 'click',
+    target: fakeTarget('button', 'Load User Profile', 'load-profile'),
+    pageX: 128,
+    pageY: 244,
+    clientX: 128,
+    clientY: 244,
+    preventDefault() {},
+    stopPropagation() {},
+    stopImmediatePropagation() {},
+  });
+  await submit.dispatchEvent({ type: 'click', target: submit });
+
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].annotation.target, undefined);
+  assert.equal(submitted[0].annotation.selector, undefined);
+});
+
 function createBrowserContext(submitted: any[]): any {
   const listeners = new Map<string, Function[]>();
   const document = new FakeDocument();
@@ -89,6 +147,10 @@ function createBrowserContext(submitted: any[]): any {
       const handlers = listeners.get(type) ?? [];
       handlers.push(handler);
       listeners.set(type, handlers);
+    },
+    removeEventListener(type: string, handler: Function) {
+      const handlers = listeners.get(type) ?? [];
+      listeners.set(type, handlers.filter((candidate) => candidate !== handler));
     },
     dispatchEvent(event: any) {
       for (const handler of listeners.get(event.type) ?? []) handler(event);
