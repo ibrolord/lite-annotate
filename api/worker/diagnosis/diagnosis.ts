@@ -1,4 +1,4 @@
-import type { RankedCandidateFile, ReportLike } from '../../indexing/code_index.ts';
+import type { RankedCandidateFile, ReportLike } from '../../indexing/code_index.js';
 
 export type DiagnosisSeverity = 'low' | 'medium' | 'high';
 
@@ -133,7 +133,7 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
       (top.score >= 300 ? 0.15 : 0) +
       (missingProperty ? 0.15 : 0) +
       (propertyRead ? 0.12 : 0) +
-      (top.path.includes('users') || top.path.includes('profile') ? 0.08 : 0)
+      (top.path.includes('users') || top.path.includes('profile') || top.path.includes('customer') ? 0.08 : 0)
   );
 
   const rootCause = property && propertyRead

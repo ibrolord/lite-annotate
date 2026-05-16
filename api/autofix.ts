@@ -1,7 +1,7 @@
-import { runPersonBPipeline } from './worker/person_b_pipeline.ts';
-import type { PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.ts';
-import { openVerifiedPR } from './worker/pr_gate.ts';
-import type { CreatePRFunction, GitHubPRResult } from './worker/pr_gate.ts';
+import { runPersonBPipeline } from './worker/person_b_pipeline.js';
+import type { PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.js';
+import { openVerifiedPR } from './worker/pr_gate.js';
+import type { CreatePRFunction, GitHubPRResult } from './worker/pr_gate.js';
 
 export type AutofixStatus = 'diagnosis_only' | 'verified_no_pr' | 'pr_opened' | 'pr_skipped';
 
@@ -14,6 +14,7 @@ export interface AutofixOptions {
   githubRepo?: string;
   createPR?: CreatePRFunction;
   skipPR?: boolean;
+  runPackageScripts?: boolean;
 }
 
 export interface AutofixResult {
@@ -29,7 +30,36 @@ function repoUrl(repo: string): string {
   return `https://github.com/${trimmed.replace(/\.git$/i, '')}`;
 }
 
-function defaultSmokeCommands(): PersonBPipelineInput['smokeCommands'] {
+function reportText(report: PersonBPipelineInput['report']): string {
+  const consoleText = [...(report.console ?? []), ...(report.consoleLogs ?? [])]
+    .map((entry) => `${entry.level ?? ''} ${entry.message ?? entry.msg ?? ''}`)
+    .join('\n');
+  const networkText = (report.network ?? [])
+    .map((entry) => `${entry.method ?? ''} ${entry.url ?? ''} ${entry.status ?? ''}`)
+    .join('\n');
+  return [report.title, report.description, report.url, report.route, consoleText, networkText].join('\n');
+}
+
+function defaultSmokeCommands(report: PersonBPipelineInput['report']): PersonBPipelineInput['smokeCommands'] {
+  const text = reportText(report);
+  if (/loyalty|customer|formatLoyaltyGreeting|vip-404/i.test(text)) {
+    return [
+      {
+        command: process.execPath,
+        args: [
+          '--input-type=module',
+          '-e',
+          [
+            "import { formatLoyaltyGreeting } from './src/customer.js';",
+            "const result = formatLoyaltyGreeting('vip-404');",
+            "if (!/not found|unavailable|missing/i.test(result)) throw new Error(`Unexpected fallback: ${result}`);",
+            'console.log(result);',
+          ].join(' '),
+        ],
+      },
+    ];
+  }
+
   return [
     {
       command: process.execPath,
@@ -49,6 +79,7 @@ function envOptions(): AutofixOptions {
     branch: process.env.TARGET_REPO_BRANCH,
     githubToken: process.env.GITHUB_TOKEN,
     githubRepo: process.env.GITHUB_REPO,
+    runPackageScripts: process.env.AUTOFIX_RUN_PACKAGE_SCRIPTS === 'false' ? false : undefined,
   };
 }
 
@@ -66,7 +97,8 @@ export async function runAutofix(
     repo: resolvedOptions.repo,
     workspaceRoot: resolvedOptions.workspaceRoot,
     branch: resolvedOptions.branch,
-    smokeCommands: defaultSmokeCommands(),
+    smokeCommands: defaultSmokeCommands(report),
+    runPackageScripts: resolvedOptions.runPackageScripts,
   });
 
   console.log(

@@ -1,7 +1,7 @@
-import type { RankedCandidateFile } from '../../indexing/code_index.ts';
-import type { Diagnosis } from '../diagnosis/diagnosis.ts';
-import { shouldPatchDiagnosis } from '../diagnosis/diagnosis.ts';
-import type { StructuredPatchFile } from './verification.ts';
+import type { RankedCandidateFile } from '../../indexing/code_index.js';
+import type { Diagnosis } from '../diagnosis/diagnosis.js';
+import { shouldPatchDiagnosis } from '../diagnosis/diagnosis.js';
+import type { StructuredPatchFile } from './verification.js';
 
 export interface GeneratedPatch {
   ok: boolean;
@@ -17,6 +17,16 @@ function targetCandidates(diagnosis: Diagnosis, candidates: RankedCandidateFile[
 function guardAlreadyExists(content: string, variableName: string): boolean {
   const escaped = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`if\\s*\\(\\s*!${escaped}\\s*\\)`).test(content);
+}
+
+function missingObjectFallback(variableName: string): string {
+  const label = variableName
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)[0] || 'Item';
+  return `${label.charAt(0).toUpperCase()}${label.slice(1).toLowerCase()} not found`;
 }
 
 function generateMissingObjectGuard(content: string): string | null {
@@ -37,7 +47,7 @@ function generateMissingObjectGuard(content: string): string | null {
   const indent = lines[lookupIndex]?.match(/^(\s*)/)?.[1] ?? '';
   const patched = [
     ...lines.slice(0, lookupIndex + 1),
-    `${indent}if (!${variableName}) return 'User not found';`,
+    `${indent}if (!${variableName}) return '${missingObjectFallback(variableName)}';`,
     ...lines.slice(lookupIndex + 1),
   ];
   return patched.join('\n');

@@ -31,6 +31,7 @@ export interface StructuredPatchVerificationInput {
   targetFiles: string[];
   files: StructuredPatchFile[];
   smokeCommands?: VerificationCommandInput[];
+  runPackageScripts?: boolean;
 }
 
 const PACKAGE_SCRIPT_ORDER = ['test', 'typecheck', 'build'] as const;
@@ -129,15 +130,17 @@ export function verifyStructuredPatch(input: StructuredPatchVerificationInput): 
   }
 
   const commands: VerificationCommandResult[] = [];
-  for (const script of packageScripts(workspacePath)) {
-    const result = runCommand(
-      workspacePath,
-      { command: 'npm', args: ['run', script] },
-      `npm run ${script}`
-    );
-    commands.push(result);
-    if (!result.ok) {
-      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+  if (input.runPackageScripts !== false) {
+    for (const script of packageScripts(workspacePath)) {
+      const result = runCommand(
+        workspacePath,
+        { command: 'npm', args: ['run', script] },
+        `npm run ${script}`
+      );
+      commands.push(result);
+      if (!result.ok) {
+        return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+      }
     }
   }
 

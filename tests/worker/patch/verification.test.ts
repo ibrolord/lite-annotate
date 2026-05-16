@@ -132,3 +132,40 @@ test('verifyStructuredPatch runs available package scripts before smoke checks',
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('verifyStructuredPatch can skip package scripts for focused hosted autofix smoke checks', () => {
+  const root = makeBrokenUsersWorkspace();
+  try {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        type: 'commonjs',
+        scripts: {
+          test: "node -e \"throw new Error('planted bug test should not run')\"",
+        },
+      })
+    );
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/users.js'],
+      files: [{ path: 'src/users.js', content: fixedUsersJs }],
+      runPackageScripts: false,
+      smokeCommands: [
+        {
+          command: process.execPath,
+          args: [
+            '-e',
+            "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))",
+          ],
+        },
+      ],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.commands.some((command) => command.name === 'npm run test'), false);
+    assert.ok(result.commands.some((command) => command.stdout.includes('User not found')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

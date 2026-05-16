@@ -1,12 +1,12 @@
-import { buildCodeIndex, rankCandidateFiles } from '../indexing/code_index.ts';
-import type { CodeIndex, RankedCandidateFile, ReportLike } from '../indexing/code_index.ts';
-import { ensureRepoWorkspace } from '../repo/workspace.ts';
-import { diagnoseReport } from './diagnosis/diagnosis.ts';
-import type { Diagnosis } from './diagnosis/diagnosis.ts';
-import { generatePatchFromDiagnosis } from './patch/generate.ts';
-import type { GeneratedPatch } from './patch/generate.ts';
-import { verifyStructuredPatch } from './patch/verification.ts';
-import type { PatchVerificationResult, VerificationCommandInput } from './patch/verification.ts';
+import { buildCodeIndex, rankCandidateFiles } from '../indexing/code_index.js';
+import type { CodeIndex, RankedCandidateFile, ReportLike } from '../indexing/code_index.js';
+import { ensureRepoWorkspace } from '../repo/workspace.js';
+import { diagnoseReport } from './diagnosis/diagnosis.js';
+import type { Diagnosis } from './diagnosis/diagnosis.js';
+import { generatePatchFromDiagnosis } from './patch/generate.js';
+import type { GeneratedPatch } from './patch/generate.js';
+import { verifyStructuredPatch } from './patch/verification.js';
+import type { PatchVerificationResult, VerificationCommandInput } from './patch/verification.js';
 
 export interface PersonBPipelineInput {
   report: ReportLike;
@@ -15,6 +15,7 @@ export interface PersonBPipelineInput {
   workspaceRoot?: string;
   branch?: string;
   smokeCommands?: VerificationCommandInput[];
+  runPackageScripts?: boolean;
 }
 
 export interface PersonBPipelineResult {
@@ -47,6 +48,7 @@ export function runPersonBPipeline(input: PersonBPipelineInput): PersonBPipeline
         targetFiles: diagnosis.targetFiles,
         files: patch.files,
         smokeCommands: input.smokeCommands,
+        runPackageScripts: input.runPackageScripts,
       })
     : null;
 

@@ -1,4 +1,4 @@
-import type { PersonBPipelineResult } from './person_b_pipeline.ts';
+import type { PersonBPipelineResult } from './person_b_pipeline.js';
 
 export interface PatchFile {
   path: string;

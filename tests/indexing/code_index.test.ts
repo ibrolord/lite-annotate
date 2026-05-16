@@ -108,3 +108,37 @@ test('rankCandidateFiles ranks src/users.js first for the pinned demo report', (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('rankCandidateFiles trusts stack-frame source paths over noisy network routes', () => {
+  const root = makeFixtureRepo();
+  try {
+    mkdirSync(join(root, 'api', 'users'), { recursive: true });
+    writeFileSync(join(root, 'api', 'users', '999.js'), `export default function handler() {}\n`);
+
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'User profile crashes reading name',
+      description: 'API returned 404, then the UI crashed.',
+      url: 'https://demo.example.com/account',
+      route: '/account',
+      console: [
+        {
+          level: 'error',
+          message: "TypeError: Cannot read properties of undefined (reading 'name') at formatUserGreeting (src/users.js:16:36)",
+        },
+      ],
+      network: [
+        {
+          method: 'GET',
+          url: '/api/users/999',
+          status: 404,
+        },
+      ],
+    });
+
+    assert.equal(ranked[0]?.path, 'src/users.js');
+    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('stack trace references src/users.js')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

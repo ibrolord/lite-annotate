@@ -321,7 +321,7 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
 
       for (const stackPath of stackPaths) {
         if (file.path === stackPath || file.path.endsWith(`/${stackPath}`)) {
-          addScore(state, 1000, `stack trace references ${stackPath}`);
+          addScore(state, 2600, `stack trace references ${stackPath}`);
         }
       }
 
