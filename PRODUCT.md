@@ -4,7 +4,7 @@
 
 Product.
 
-Lite Annotate should read as a focused engineering workflow product, not a thin wrapper around an AI agent. The core promise is practical: customer bug reports become durable engineering memory, evidence-backed diagnosis, verified patches, and gated PRs.
+Lite Annotate should read as a focused engineering workflow product, not a thin wrapper around an AI agent. The core promise is practical: add one widget script to a web app, and customer bug reports become durable engineering memory, evidence-backed diagnosis, verified patches, and gated PRs.
 
 ## Product Purpose
 
@@ -12,7 +12,7 @@ Lite Annotate closes the gap between user-reported bugs and engineering action. 
 
 ## Positioning
 
-**One-line pitch:** customer bug reports become engineering memory, diagnosis, and verified fix PRs.
+**One-line pitch:** add one script tag to any web app, and customer bug reports become engineering memory, diagnosis, and verified fix PRs.
 
 **Category:** bug capture and engineering review automation for web apps.
 
@@ -45,7 +45,7 @@ Avoid novelty-first AI language. Lead with receipts, constraints, and reviewabil
 
 Current product boundary:
 
-- Hosted widget and demo app.
+- Hosted drop-in widget and demo app.
 - Report capture API and dashboard.
 - GBrain-compatible report, diagnosis, and outcome memory.
 - JavaScript/TypeScript repo indexing and candidate ranking.
@@ -70,6 +70,7 @@ Not yet in scope:
 ## Success Criteria
 
 - A developer understands the capture-to-PR loop within one screen.
+- A judge understands the integration story from the README or demo header without reading backend code.
 - The dashboard makes report status and analysis state scannable.
 - Report detail explains memory impact and analysis state before raw payloads.
 - Dry-run analysis is clearly safer than PR-opening analysis.

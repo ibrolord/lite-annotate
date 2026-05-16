@@ -2,7 +2,7 @@
 
 ## One-line Pitch
 
-Lite Annotate turns customer bug reports into engineering memory, then uses a gated review worker to diagnose the report, find the likely code path, and open a fix PR when safe. GStack is an optional AI-engineering workflow for planning, reviewing, QAing, and shipping the project work around that worker.
+Lite Annotate adds to any browser-based app repo with one widget script, turns customer bug reports into engineering memory, then uses a gated review worker to diagnose the report, find the likely code path, and open a fix PR when safe. GStack is an optional AI-engineering workflow for planning, reviewing, QAing, and shipping the project work around that worker.
 
 ## Product Shape
 
@@ -10,7 +10,7 @@ This is a hosted bug-capture and engineering-review loop:
 
 ```text
 Customer app
-  -> hosted widget.js
+  -> one hosted widget.js script tag
   -> hosted API
   -> report store
   -> GBrain memory
@@ -20,6 +20,23 @@ Customer app
 ```
 
 The product should lead with triage and engineering review. PR creation is the magic moment, but it should not be the only thing that proves value.
+
+## Integration Story
+
+For the hackathon, lead with the easiest true path:
+
+```html
+<script>
+  window.ANNOTATE_API_URL = "https://lite-annotate.example.com";
+  window.ANNOTATE_PROJECT_ID = "my-app";
+  window.ANNOTATE_REPO = "owner/repo";
+</script>
+<script async src="https://lite-annotate.example.com/widget.js"></script>
+```
+
+That is enough to capture useful reports from any browser app. Repo-aware dry-run analysis works from the repo slug. PR creation is the optional final step after GitHub credentials are configured and verification passes.
+
+See [INTEGRATION_AUDIT.md](INTEGRATION_AUDIT.md) for the current effort audit and honest limits.
 
 ## Current Validation Summary
 

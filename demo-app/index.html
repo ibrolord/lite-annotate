@@ -258,9 +258,9 @@
   <main>
     <header class="topbar">
       <div>
-        <span class="eyebrow">Evidence pipeline</span>
-        <h1>Lite Annotate Demo</h1>
-        <p>Trigger the profile bug, submit it with the widget, then watch the report become memory, handoff context, and analysis input.</p>
+        <span class="eyebrow">Drop-in bug pipeline</span>
+        <h1>One widget script. Repo-aware bug reports.</h1>
+        <p>Add Lite Annotate to any browser app with a script tag, then watch a report become memory, handoff context, and analysis input for the target repo.</p>
       </div>
       <a href="/reports/dashboard">Reports dashboard</a>
     </header>
@@ -269,7 +269,7 @@
       <section class="hero-panel">
         <div class="bug-card">
           <h2>Capture lab</h2>
-          <p>Click the profile action to create the pinned failure, then report it from the floating widget.</p>
+          <p>This demo page is integrated the same way a customer repo is: config globals plus the hosted widget script. Click the profile action, then report it from the floating widget.</p>
           <button id="load-profile" onclick="loadUser()">Load User Profile</button>
           <div id="output"></div>
           <div class="status" id="bug-status">No report submitted yet.</div>
@@ -277,10 +277,10 @@
         <div class="surface handoff-console">
           <h2>What the judge should see</h2>
           <div class="signal-rail">
-            <div class="signal-row"><span class="dot"></span><strong>Console error</strong><code>captured</code></div>
+            <div class="signal-row"><span class="dot"></span><strong>One script tag</strong><code>installed</code></div>
             <div class="signal-row"><span class="dot"></span><strong>Network 404</strong><code>captured</code></div>
             <div class="signal-row"><span class="dot"></span><strong>Page annotation</strong><code>pinned</code></div>
-            <div class="signal-row"><span class="dot"></span><strong>GBrain memory</strong><code>written</code></div>
+            <div class="signal-row"><span class="dot"></span><strong>Repo context</strong><code>owner/repo</code></div>
           </div>
         </div>
       </section>
@@ -288,13 +288,13 @@
       <section class="stack">
         <div class="section-head">
           <h2>Analysis handoff</h2>
-          <p>These are the signals the backend stores and passes into memory-aware analysis.</p>
+          <p>These are the signals the backend stores and passes into memory-aware analysis after the simple widget install.</p>
         </div>
         <ol class="flow" aria-label="Evidence pipeline">
-          <li><b>1</b><strong>Capture</strong><span>Widget collects annotation, route, console, network, session, and screenshot.</span></li>
-          <li><b>2</b><strong>Normalize</strong><span>API writes a stable report contract that engineers can inspect.</span></li>
-          <li><b>3</b><strong>Remember</strong><span>GBrain stores the bug and retrieves similar prior context.</span></li>
-          <li><b>4</b><strong>Analyze</strong><span>Dry-run analysis verifies the fix path before any PR action.</span></li>
+          <li><b>1</b><strong>Install</strong><span>Customer app adds config globals and the hosted widget script.</span></li>
+          <li><b>2</b><strong>Capture</strong><span>Widget collects annotation, route, console, network, session, and screenshot.</span></li>
+          <li><b>3</b><strong>Remember</strong><span>API writes memory and a stable report contract engineers can inspect.</span></li>
+          <li><b>4</b><strong>Analyze</strong><span>Dry-run analysis checks the repo-aware fix path before any PR action.</span></li>
         </ol>
         <div class="data-grid">
           <section class="data-panel">

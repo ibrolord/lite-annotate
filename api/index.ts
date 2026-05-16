@@ -1404,6 +1404,47 @@ function summarizeStoredAutofix(autofix: unknown): {
   return { candidateFiles, targetFiles, rootCause, verificationOk, verificationCommands };
 }
 
+function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
+  const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/autofix">
+    <summary>Raw analysis JSON</summary>
+    <pre data-analysis-raw>Open to load analysis result.</pre>
+  </details>`;
+
+  if (!autofix || typeof autofix !== 'object') {
+    return `<div class="analysis-body">
+      <p>No analysis has run yet. Use Dry run analysis to verify diagnosis and patch gates without opening a public PR.</p>
+    </div>
+    ${rawDetails}`;
+  }
+
+  const summary = summarizeStoredAutofix(autofix);
+  const status = analysisStatus(autofix);
+  const pr = (autofix as { pr?: unknown }).pr;
+  const prUrl = pr && typeof pr === 'object' && typeof (pr as { url?: unknown }).url === 'string'
+    ? (pr as { url: string }).url
+    : '';
+  const targetFiles = summary.targetFiles.length ? summary.targetFiles.join(', ') : 'No target files recorded';
+  const candidateFiles = summary.candidateFiles.length ? summary.candidateFiles.join(', ') : 'No candidate files recorded';
+  const verification = summary.verificationOk === null
+    ? 'not recorded'
+    : summary.verificationOk ? 'passed' : 'failed';
+  const commands = summary.verificationCommands.length
+    ? summary.verificationCommands.join(', ')
+    : 'No verification commands recorded';
+
+  return `<div class="analysis-summary">
+    <dl>
+      <div><dt>Status</dt><dd>${escapeHtml(status)}</dd></div>
+      <div><dt>Root cause</dt><dd>${escapeHtml(summary.rootCause ?? 'No root cause recorded')}</dd></div>
+      <div><dt>Targets</dt><dd>${escapeHtml(targetFiles)}</dd></div>
+      <div><dt>Candidates</dt><dd>${escapeHtml(candidateFiles)}</dd></div>
+      <div><dt>Verification</dt><dd>${escapeHtml(verification)} · ${escapeHtml(commands)}</dd></div>
+      <div><dt>PR</dt><dd>${prUrl ? `<a href="${escapeHtml(prUrl)}">${escapeHtml(prUrl)}</a>` : 'No PR opened'}</dd></div>
+    </dl>
+  </div>
+  ${rawDetails}`;
+}
+
 function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
   const top = summary.topMemory
     ? `<div class="memory-headline">

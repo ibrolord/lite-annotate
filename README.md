@@ -1,8 +1,8 @@
 # Lite Annotate
 
-Lite Annotate turns in-app bug reports into engineering-ready fixes.
+Lite Annotate turns in-app bug reports into engineering-ready fixes with a drop-in widget for any browser-based app repo.
 
-It gives a web app one feedback widget that captures the user report plus the technical context engineers usually have to reconstruct: route, browser state, console errors, network breadcrumbs, lightweight session events, and a screenshot. Each report becomes durable engineering memory, then flows through evidence-backed diagnosis, scoped patch generation, local verification, and optional GitHub PR creation.
+Add one script tag, point the report at a GitHub repo, and Lite Annotate captures the user report plus the technical context engineers usually have to reconstruct: route, browser state, console errors, network breadcrumbs, lightweight session events, and a screenshot. Each report becomes durable engineering memory, then flows through evidence-backed diagnosis, scoped patch generation, local verification, and optional GitHub PR creation.
 
 ```text
 user report
@@ -12,6 +12,30 @@ user report
   -> verified patch
   -> guarded pull request
 ```
+
+## 5-Minute Integration
+
+Add this to any web page:
+
+```html
+<script>
+  window.ANNOTATE_API_URL = "https://lite-annotate.example.com";
+  window.ANNOTATE_PROJECT_ID = "my-app";
+  window.ANNOTATE_REPO = "owner/repo";
+</script>
+<script async src="https://lite-annotate.example.com/widget.js"></script>
+```
+
+That is the whole customer-repo integration for capture. No npm package, framework adapter, build plugin, or SDK call is required.
+
+For hackathon demos, use the staged path:
+
+1. **Capture:** add the widget snippet and submit a bug report.
+2. **Inspect:** open `/reports/dashboard` or `/reports/:id/view`.
+3. **Dry run:** call `POST /reports/:id/autofix?dryRun=1` to get diagnosis and verification without opening a PR.
+4. **PR gate:** configure GitHub credentials and call `POST /reports/:id/autofix` only when the guarded PR path is needed.
+
+See [docs/INTEGRATION_AUDIT.md](docs/INTEGRATION_AUDIT.md) for the honest effort breakdown.
 
 ## Why It Exists
 
@@ -27,6 +51,7 @@ Lite Annotate is positioned around that missing handoff. It makes every report a
 
 ## Product Surface
 
+- Drop-in widget config through `window.ANNOTATE_API_URL`, `window.ANNOTATE_PROJECT_ID`, and `window.ANNOTATE_REPO`
 - Hosted demo app at `/demo`
 - Hosted widget script at `/widget.js`
 - Report intake API at `POST /report`
@@ -107,6 +132,7 @@ Start here:
 
 - [PRODUCT.md](PRODUCT.md) - product positioning, users, tone, and principles.
 - [DESIGN.md](DESIGN.md) - interface register and visual constraints.
+- [docs/INTEGRATION_AUDIT.md](docs/INTEGRATION_AUDIT.md) - integration effort audit and hackathon positioning.
 - [docs/PRD.md](docs/PRD.md) - functional requirements and product boundaries.
 - [docs/GBRAIN_DEMO_STORY.md](docs/GBRAIN_DEMO_STORY.md) - demo narrative for memory-assisted engineering review.
 - [docs/TRACKER.md](docs/TRACKER.md) - implementation status, proof points, and commit ledger.
