@@ -1382,7 +1382,7 @@ function renderGStackInvestigationHtml(
 
   return `<section class="surface">
     <div class="surface-head">
-      <h2>GStack Review</h2>
+      <h2>GStack Investigation</h2>
       <span class="status-pill">${escapeHtml(investigation.status)}</span>
     </div>
     <div class="investigation-summary">

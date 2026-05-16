@@ -19,6 +19,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     'GSTACK_CALLBACK_TOKEN',
     'GSTACK_REPO_ALLOWLIST',
     'GSTACK_TRIGGER_TOKEN',
+    'GSTACK_UI_TRIGGER_ENABLED',
     'GSTACK_ALLOW_PR',
     'PUBLIC_BASE_URL',
   ]);
@@ -32,6 +33,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
   process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
   process.env.GSTACK_REPO_ALLOWLIST = 'ibrolord/lite-annotate-demo';
   process.env.GSTACK_TRIGGER_TOKEN = 'trigger-secret';
+  process.env.GSTACK_UI_TRIGGER_ENABLED = '1';
   process.env.GSTACK_ALLOW_PR = '1';
   process.env.PUBLIC_BASE_URL = 'https://lite-annotate.example.com';
 
@@ -65,22 +67,21 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     });
     assert.equal(rejected.status, 401);
 
-    const create = await app.request(`/reports/${posted.reportId}/gstack-review`, {
+    const create = await app.request(`/reports/${posted.reportId}/gstack/investigate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer trigger-secret' },
-      body: JSON.stringify({ mode: 'review_fix', allowPr: true }),
+      headers: { 'Content-Type': 'application/json' },
     });
     assert.equal(create.status, 202);
     const created = await create.json();
-    assert.equal(created.gstackReview.jobId, 'gstack_job_123');
-    assert.equal(created.gstackReview.status, 'queued');
-    assert.equal(created.gstackReview.mode, 'review_fix');
+    assert.equal(created.investigation.runner.jobId, 'gstack_job_123');
+    assert.equal(created.investigation.status, 'queued');
+    assert.equal(created.investigation.runner.workflow, 'investigate');
     assert.equal(runnerRequests.length, 1);
     assert.equal(runnerRequests[0].url, 'https://gstack-runner.example.com/jobs');
     assert.equal(runnerRequests[0].auth, 'Bearer runner-secret');
     assert.equal((runnerRequests[0].body as { callbackUrl: string }).callbackUrl, 'https://lite-annotate.example.com/internal/gstack-callback');
-    assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, true);
-    assert.equal((runnerRequests[0].body as { mode: string }).mode, 'review_fix');
+    assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, false);
+    assert.equal((runnerRequests[0].body as { mode: string }).mode, 'investigate');
 
     const callback = await app.request('/internal/gstack-callback', {
       method: 'POST',
@@ -92,9 +93,14 @@ test('GStack review endpoint creates remote job and callback stores result', asy
         jobId: 'gstack_job_123',
         reportId: posted.reportId,
         status: 'passed',
-        mode: 'qa',
+        mode: 'investigate',
         commandsRun: ['/investigate', '/review'],
-        summary: 'GStack review passed',
+        headline: 'Missing-user path crashes after a 404.',
+        summary: 'GStack investigation passed',
+        rootCause: 'The UI reads user.name after /api/users/999 returns 404.',
+        confidence: 'high',
+        evidence: [{ label: 'Code', value: 'src/users.js reads user.name without a guard' }],
+        recommendedAction: { type: 'autofix', label: 'Run Auto-Fix with this investigation' },
         diagnosis: 'Missing user guard',
         tests: [{ command: 'npm test', status: 'passed' }],
         logs: 'raw runner output with runner-secret and callback-secret',
@@ -106,15 +112,27 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     const get = await app.request(`/reports/${posted.reportId}/gstack-review`);
     const getBody = await get.json();
     assert.equal(getBody.gstackReview.status, 'passed');
-    assert.equal(getBody.gstackReview.mode, 'qa');
-    assert.equal(getBody.gstackReview.result.mode, 'qa');
-    assert.equal(getBody.gstackReview.result.summary, 'GStack review passed');
+    assert.equal(getBody.gstackReview.mode, 'investigate');
+    assert.equal(getBody.gstackReview.result.mode, 'investigate');
+    assert.equal(getBody.gstackReview.result.summary, 'GStack investigation passed');
     assert.equal('logs' in getBody.gstackReview.result, false);
+
+    const investigation = await app.request(`/reports/${posted.reportId}/gstack/investigation`);
+    assert.equal(investigation.status, 200);
+    const investigationBody = await investigation.json();
+    assert.equal(investigationBody.investigation.status, 'passed');
+    assert.equal(investigationBody.investigation.headline, 'Missing-user path crashes after a 404.');
+    assert.equal(investigationBody.investigation.rootCause, 'The UI reads user.name after /api/users/999 returns 404.');
+    assert.equal(investigationBody.investigation.confidence, 'high');
+    assert.equal(investigationBody.investigation.recommendedAction.type, 'autofix');
+    assert.equal(investigationBody.investigation.evidence.some((item: { label: string }) => item.label === 'Browser console'), true);
+    assert.equal(investigationBody.investigation.evidence.some((item: { label: string }) => item.label === 'Code'), true);
 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
-    assert.match(html, /GStack Review/);
-    assert.match(html, /GStack review passed/);
+    assert.match(html, /GStack Investigation/);
+    assert.match(html, /Missing-user path crashes after a 404/);
+    assert.match(html, /Run Auto-Fix with this investigation/);
   } finally {
     globalThis.fetch = oldFetch;
     restoreEnv(oldEnv);
