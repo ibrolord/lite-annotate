@@ -67,6 +67,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `hosted-person-b-2026-05-16` | Person B / Deploy | Unblocked hosted Person B repo cloning and diagnosis | Partial | Railway env now has target repo/GitHub credentials and `RAILPACK_DEPLOY_APT_PACKAGES=git`; deployment `e3f90218-e3df-46ab-acb6-0e2eb4f3b26c`; live autofix for `bug_81e3cf24-7343-4081-a618-c9a8372f7187` ranked `src/users.js` but did not open a PR because `ibrolord/lite-annotate-demo` already merged fix PR #1 |
 | `hosted-person-b-pr-2026-05-16` | Person B / PR proof | Opened a hosted verified PR from Person B | Done | Proof repo `ibrolord/lite-annotate-demo-pr-proof`; Railway deployment `7454d1aa-a367-4313-8205-3e4b34b60b52`; dry-run returned `verified_no_pr` with verification passing; normal autofix returned `pr_opened`; PR https://github.com/ibrolord/lite-annotate-demo-pr-proof/pull/1 modifies `src/users.js` after `npm run test`, `node --check src/users.js`, and smoke command passed |
 | `gstack-runner-2026-05-16` | GStack Runner / Safety | Added protected remote GStack runner integration | Ready for deploy setup | `npm run typecheck`; `npm test` 37/37; runner health smoke on `localhost:3025`; trigger requires `GSTACK_TRIGGER_TOKEN`; non-PR runner jobs strip write GitHub credentials; callbacks strip raw logs; report updates serialize per report |
+| `gstack-runner-stdio-2026-05-16` | GStack Runner / Safety | Ignored runner child stdin explicitly | Done | Uses Node `stdio` option so spawned Claude/Git processes cannot hang on inherited stdin |
 
 ## Gates
 
