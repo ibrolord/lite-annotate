@@ -146,6 +146,17 @@ Do not rely only on `gbrain code_def`. Local validation showed `code_refs` was u
 
 The worker should not jump straight to code.
 
+The accuracy priority is:
+
+```text
+retrieve likely files
+  -> diagnose with evidence
+  -> patch only target files
+  -> apply patch in temp clone
+  -> run checks
+  -> push branch and open PR only after checks pass
+```
+
 ### Step 1: Diagnose
 
 Return structured diagnosis:
@@ -166,6 +177,14 @@ Return structured diagnosis:
 ```
 
 If the worker cannot explain the root cause, it should return `needs_more_context` instead of editing code.
+
+Minimum patch threshold:
+
+```text
+confidence >= 0.75
+targetFiles <= 2
+evidence includes exact code snippet or line reference
+```
 
 ### Step 2: Patch
 
@@ -194,7 +213,7 @@ If another file is required, ask for more context.
 
 ### Step 3: Verify
 
-Run the best available checks:
+Run the best available checks in the patched temp clone before pushing anything to GitHub:
 
 ```text
 npm test
@@ -204,7 +223,22 @@ npm run build
 
 If the repo has no tests, run syntax/build checks and a small smoke reproduction.
 
+For the pinned demo repo, the minimum verification is:
+
+```bash
+node --check src/users.js
+node -e "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))"
+```
+
+Expected result:
+
+```text
+No crash. The missing-user case returns a fallback greeting.
+```
+
 ### Step 4: Open PR
+
+Open the PR only after the patch applies and verification passes.
 
 PR body should include:
 
@@ -288,7 +322,7 @@ Build:
 Gate:
 
 ```text
-Report submitted -> worker produces useful root-cause diagnosis without manual explanation.
+Pinned demo report -> worker names src/users.js, cites the user.name dereference, and explains the missing not-found guard.
 ```
 
 ### Phase 4: Fix PR
@@ -296,14 +330,14 @@ Report submitted -> worker produces useful root-cause diagnosis without manual e
 Build:
 
 - Generate diff.
-- Apply in isolated clone.
-- Run checks.
-- Open GitHub PR.
+- Apply in temporary clone.
+- Run syntax/build/test or bug-specific smoke checks.
+- Push branch and open GitHub PR only after checks pass.
 
 Gate:
 
 ```text
-Report submitted -> PR opens with a reasonable, scoped fix.
+Report submitted -> scoped patch passes checks locally -> PR opens with verification evidence.
 ```
 
 ## Demo Script
@@ -319,6 +353,9 @@ Report submitted -> PR opens with a reasonable, scoped fix.
 ## Demo Reliability Rules
 
 - Keep one known bug with a deterministic fix.
+- Pinned demo expected file: `src/users.js`.
+- Pinned demo expected diagnosis: missing not-found/null guard before reading `user.name`.
+- Pinned demo expected modified file set: only `src/users.js`.
 - Have one successful PR already open as backup.
 - Do not rely on live PR generation unless it passed three rehearsals.
 - If PR generation fails, demo the diagnosis and memory flow; it is still valuable.

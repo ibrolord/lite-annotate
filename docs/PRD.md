@@ -40,7 +40,7 @@ The app user experiences a bug and needs a low-friction way to report it from in
 2. Store every bug report and engineering outcome as durable memory.
 3. Retrieve similar prior bugs and code context before diagnosis.
 4. Produce a clear engineering diagnosis before attempting a fix.
-5. Open only scoped, evidence-backed PRs.
+5. Open only scoped, evidence-backed PRs that pass local verification before push.
 6. Keep the live demo reliable even if PR generation fails.
 
 ## Non-goals
@@ -51,6 +51,7 @@ The app user experiences a bug and needs a low-friction way to report it from in
 - Fully autonomous merge.
 - Running arbitrary commands from customer input.
 - Supporting every programming language on day one.
+- Production-grade abuse prevention and security hardening.
 
 ## User Journey
 
@@ -146,6 +147,22 @@ The worker index must extract, where possible:
 
 For the hackathon version, support JavaScript/TypeScript first.
 
+### Accuracy Requirements
+
+Accuracy is the primary hackathon priority.
+
+Every generated PR must pass these gates before the branch is pushed:
+
+```text
+1. Candidate retrieval found the likely file.
+2. Diagnosis cites concrete evidence.
+3. Patch modifies only target files.
+4. Patch applies cleanly in a temp clone.
+5. Syntax/build/test or bug-specific smoke check passes.
+```
+
+If any gate fails, the worker must return diagnosis-only output and skip PR creation.
+
 ### Candidate File Ranking
 
 For each report, rank candidate files by:
@@ -159,6 +176,15 @@ For each report, rank candidate files by:
 7. Test proximity.
 
 Only the top 3-5 files should be sent to the fix worker.
+
+For the pinned demo bug, the expected gate is:
+
+```text
+Bug: user profile crashes reading name
+Expected file: src/users.js
+Pass: src/users.js appears in top 3 candidates
+Strong pass: src/users.js is top 1
+```
 
 ### Diagnosis
 
@@ -181,19 +207,28 @@ Before patching, the worker must produce structured diagnosis:
 
 If confidence is low or target files are unclear, the worker must return diagnosis only and skip PR creation.
 
+Minimum patch threshold:
+
+```text
+confidence >= 0.75
+targetFiles <= 2
+evidence includes exact code snippet or line reference
+```
+
 ### Patch Generation
 
 The worker must:
 
 - Prefer unified diff.
+- Fall back to a structured search/replace patch if unified diff application fails.
 - Modify only the diagnosis `targetFiles`.
 - Refuse broad edits unless explicitly approved.
 - Avoid secrets, `.env` files, lockfiles, generated files, and unrelated refactors.
-- Create a branch per report.
+- Apply the patch in a temporary clone before creating any branch on GitHub.
 
 ### Verification
 
-Before opening a PR, the worker must run the strongest available checks:
+Before pushing a branch or opening a PR, the worker must run the strongest available checks in the patched temp clone:
 
 ```text
 npm test
@@ -207,7 +242,24 @@ If no project checks exist, it must run:
 - Any obvious smoke reproduction.
 - A clear "verification limited" note in the PR body.
 
+For the pinned demo repo, the minimum verification is:
+
+```bash
+node --check src/users.js
+node -e "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))"
+```
+
+Expected result:
+
+```text
+No crash. The missing-user case returns a fallback greeting.
+```
+
+Only after these checks pass should the worker create a branch, commit, push, and open a PR.
+
 ### PR Creation
+
+PR creation happens after local verification, not before.
 
 PR body must include:
 
@@ -293,7 +345,11 @@ Host as a separate service:
 - OAuth client for `lite-annotate-worker`.
 - Embedding provider key.
 
-## Security Requirements
+## Security Requirements Deferred For Hackathon
+
+For the hackathon, accuracy and demo reliability are higher priority than production security.
+
+The following are acknowledged but not gating Phase 1-4 unless they directly affect PR accuracy:
 
 - No committed secrets.
 - GitHub access through restricted token or GitHub App.
@@ -326,7 +382,7 @@ Report creates memory entry and similar bug search works.
 Gate:
 
 ```text
-Report produces useful root-cause diagnosis with evidence and target files.
+Pinned demo report produces diagnosis that names src/users.js, cites the user.name dereference, and explains the missing not-found guard.
 ```
 
 ### Phase 4: PR
@@ -334,7 +390,7 @@ Report produces useful root-cause diagnosis with evidence and target files.
 Gate:
 
 ```text
-Report opens a scoped PR with verification evidence.
+Report produces a scoped patch, applies it in a temp clone, passes checks, then opens a PR with verification evidence.
 ```
 
 ## Demo Requirements
@@ -361,14 +417,16 @@ For the hackathon:
 - Report submitted from public page.
 - Memory entry created.
 - Similar bug retrieval works.
-- Candidate file ranking finds the correct file.
-- Diagnosis is correct.
-- PR opens or diagnosis-only fallback is clear.
+- Candidate file ranking puts `src/users.js` in top 3 for the pinned demo bug.
+- Diagnosis names the missing null/not-found guard.
+- Patch modifies only `src/users.js`.
+- Patch passes syntax and bug-specific smoke verification before push.
+- PR opens only after verification, or diagnosis-only fallback is clear.
 
 For product direction:
 
 - Time from report to diagnosis under 90 seconds.
-- Top-3 candidate file recall high enough for common JS/TS bugs.
+- Top-3 candidate file recall is measured on a growing bug fixture set.
 - PRs are scoped and reviewable.
 - No broad unrelated edits.
 
