@@ -81,6 +81,26 @@ export { loadLoyaltyProfile };
 `
   );
   writeFileSync(
+    join(root, 'src', 'styles.css'),
+    `.button {
+  min-height: 44px;
+}
+
+.button-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.button-primary:hover {
+  background: var(--accent-strong);
+}
+
+.checkout-form {
+  display: grid;
+}
+`
+  );
+  writeFileSync(
     join(root, 'api', 'customers', 'vip-404.js'),
     `export default function handler(_req, res) {
   res.status(404).json({
@@ -295,5 +315,40 @@ test('runAutofix uses the report repo before hosted env repo defaults', async ()
     rmSync(wrongRepo, { recursive: true, force: true });
     rmSync(commerceRepo, { recursive: true, force: true });
     rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix fixes the Cedar & Sail checkout button color report with focused verification', async () => {
+  const root = makeCommerceRepo();
+  try {
+    const result = await runAutofix('bug_checkout_button_blue', {
+      title: 'Checkout button should be blue',
+      description: 'On /checkout, the Place demo order primary button should use a blue background so the checkout CTA stands out from the rest of the page.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
+      route: '/checkout',
+      annotation: {
+        target: 'form#checkout-form:Email Name Address Place demo order',
+        selector: 'form#checkout-form',
+        route: '/checkout',
+      },
+      console: [],
+      network: [],
+      session: [{ type: 'click', target: 'button:Report a bug with technical context' }],
+    }, {
+      workspacePath: root,
+      githubToken: undefined,
+      githubRepo: undefined,
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.candidates[0]?.path, 'src/styles.css');
+    assert.deepEqual(result.pipeline.diagnosis.targetFiles, ['src/styles.css']);
+    assert.equal(result.pipeline.patch.ok, true);
+    assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css']);
+    assert.match(result.pipeline.patch.files[0]?.content ?? '', /\.checkout-form \.button-primary/);
+    assert.match(result.pipeline.patch.files[0]?.content ?? '', /#2563eb/);
+    assert.equal(result.pipeline.verification?.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -207,6 +207,54 @@ export function createApp(deps: {
     return c.json({ reportId: record.report.id, gstackReview: record.gstackReview ?? null });
   });
 
+  app.get('/reports/:id/gstack/investigation', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    return c.json({
+      reportId: record.report.id,
+      investigation: buildGStackInvestigation(record.report, record.gstackReview ?? null),
+    });
+  });
+
+  app.post('/reports/:id/gstack/investigate', async (c) => {
+    const auth = requireGStackProductTrigger(c.req.raw);
+    if (!auth.ok) return c.json({ error: auth.error, message: auth.message }, auth.status);
+
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
+    const callbackBaseUrl = process.env.GSTACK_CALLBACK_BASE_URL?.replace(/\/+$/, '') ?? publicBaseUrl;
+    if (!callbackBaseUrl) {
+      return c.json({ error: 'gstack_not_configured', message: 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required' }, 503);
+    }
+
+    try {
+      const job = await createRemoteGStackReview({
+        reportId: record.report.id,
+        repo: record.report.repo,
+        mode: 'investigate',
+        allowPr: false,
+        report: record.report,
+        reportUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}` : undefined,
+        memoryUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/memory` : undefined,
+        handoffUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/handoff` : undefined,
+        callbackUrl: `${callbackBaseUrl}/internal/gstack-callback`,
+      });
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        gstackReview: mergeQueuedGStackReview(current.gstackReview, job),
+        updatedAt: new Date().toISOString(),
+      }));
+      return c.json({
+        reportId: record.report.id,
+        investigation: buildGStackInvestigation(record.report, updated?.gstackReview ?? job),
+      }, 202);
+    } catch (err) {
+      return c.json({ error: 'gstack_job_failed', message: errorMessage(err) }, 502);
+    }
+  });
+
   app.post('/reports/:id/gstack-review', async (c) => {
     const auth = requireConfiguredBearer(c.req.raw, 'GSTACK_TRIGGER_TOKEN');
     if (!auth.ok) return c.json({ error: auth.error, message: auth.message }, auth.status);
@@ -221,7 +269,7 @@ export function createApp(deps: {
       body = {};
     }
 
-    const mode = parseGStackMode(body.mode);
+    const mode = parseGStackMode(body.workflow ?? body.mode);
     if (body.allowPr === true && process.env.GSTACK_ALLOW_PR !== '1') {
       return c.json({ error: 'pr_not_allowed', message: 'GSTACK_ALLOW_PR=1 is required before remote GStack jobs may open PRs' }, 403);
     }
@@ -768,6 +816,34 @@ function renderReportHtml(
       font: 760 12px ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .receipt-list strong { display: block; margin-bottom: 3px; }
+    .investigation-summary { display: grid; gap: 12px; padding: 14px 16px 16px; }
+    .investigation-summary strong { display: block; line-height: 1.35; }
+    .investigation-summary .root-cause { color: var(--ink); }
+    .investigation-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .investigation-actions button { min-height: 38px; }
+    .investigation-actions .quiet {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--ink);
+    }
+    .investigation-evidence { display: grid; border-top: 1px solid var(--line); }
+    .investigation-evidence li {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      line-height: 1.4;
+    }
+    .investigation-evidence li:last-child { border-bottom: 0; }
+    .investigation-evidence span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .investigation-disabled { padding: 0 16px 14px; font-size: 13px; color: var(--muted); }
     details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
     summary { cursor: pointer; padding: 14px 16px; font-weight: 700; }
     .raw-label { margin: 0 16px 8px; }
@@ -786,6 +862,7 @@ function renderReportHtml(
     }
     @media (max-width: 560px) {
       .evidence-row, .safety-row { grid-template-columns: 1fr; gap: 4px; }
+      .investigation-evidence li { grid-template-columns: 1fr; gap: 4px; }
       .repo-control { grid-template-columns: 1fr; }
     }
   </style>
@@ -875,15 +952,7 @@ function renderReportHtml(
             <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
           </div>
         </section>
-        <section class="surface">
-          <div class="surface-head">
-            <h2>GStack Review</h2>
-            <span class="status-pill">${escapeHtml(gstackStatus(gstackReview))}</span>
-          </div>
-          <div class="analysis-body">
-            <pre>${escapeHtml(JSON.stringify(gstackReview, null, 2))}</pre>
-          </div>
-        </section>
+        ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
       </aside>
       <section class="stack">
         <section class="surface">
@@ -958,6 +1027,23 @@ interface MemoryReceipt {
   source: 'current_browser_report' | 'prior_memory' | 'code_evidence' | 'verification' | 'outcome_memory';
   label: string;
   detail: string;
+}
+
+type GStackInvestigationStatus = StoredGStackReviewRecord['status'] | 'not_run';
+
+interface GStackInvestigationView {
+  status: GStackInvestigationStatus;
+  headline: string;
+  rootCause: string;
+  confidence: 'unknown' | 'low' | 'medium' | 'high';
+  evidence: Array<{ label: string; value: string; source?: string }>;
+  recommendedAction: { type: 'wait' | 'autofix' | 'manual' | 'none'; label: string };
+  runner: {
+    jobId?: string;
+    workflow: 'investigate';
+    commandsRun: string[];
+  };
+  raw: StoredGStackReviewRecord | null;
 }
 
 function buildMemoryImpact(
@@ -1104,6 +1190,113 @@ function buildMemoryReceipts(report: LiteReport, memoryImpact: MemoryImpactSumma
   return receipts;
 }
 
+function buildGStackInvestigation(
+  report: LiteReport,
+  gstackReview: StoredGStackReviewRecord | null
+): GStackInvestigationView {
+  const result = gstackReview?.result;
+  const status = gstackReview?.status ?? 'not_run';
+  const headline = result?.headline
+    ?? (result?.summary
+    ? firstSentence(result.summary)
+    : status === 'queued'
+      ? 'GStack investigation is queued.'
+      : status === 'running'
+        ? 'GStack is investigating this report against the repository.'
+        : 'No GStack investigation has run yet.');
+  const rootCause = result?.rootCause
+    ?? result?.diagnosis
+    ?? (result?.summary && status !== 'queued' && status !== 'running' ? result.summary : '')
+    ?? 'Run the investigation to trace the browser evidence into the repository.';
+  const evidence = buildGStackEvidence(report, result);
+  const confidence = result?.confidence ?? gstackConfidence(status, result, evidence);
+
+  return {
+    status,
+    headline,
+    rootCause,
+    confidence,
+    evidence,
+    recommendedAction: result?.recommendedAction ?? gstackRecommendedAction(status, result),
+    runner: {
+      jobId: gstackReview?.jobId,
+      workflow: 'investigate',
+      commandsRun: result?.commandsRun ?? [],
+    },
+    raw: gstackReview,
+  };
+}
+
+function buildGStackEvidence(
+  report: LiteReport,
+  result: GStackReviewResult | undefined
+): Array<{ label: string; value: string; source?: string }> {
+  const evidence: Array<{ label: string; value: string; source?: string }> = [];
+  const consoleMessage = report.console[0]?.message;
+  if (consoleMessage) evidence.push({ label: 'Browser console', value: consoleMessage, source: 'report.console' });
+  const network = report.network[0];
+  if (network) {
+    evidence.push({
+      label: 'Network',
+      value: `${network.method} ${network.url} returned ${network.status ?? 'n/a'}`,
+      source: 'report.network',
+    });
+  }
+  if (report.annotation.target) {
+    evidence.push({ label: 'User action', value: report.annotation.target, source: 'report.annotation' });
+  }
+  for (const item of result?.evidence ?? []) {
+    if (item.label && item.value) evidence.push(item);
+  }
+  for (const finding of result?.findings ?? []) {
+    const location = finding.file ? `${finding.file}${typeof finding.line === 'number' ? `:${finding.line}` : ''}` : 'code';
+    evidence.push({
+      label: 'Code',
+      value: `${location}: ${finding.message}`,
+      source: finding.severity,
+    });
+  }
+  for (const test of result?.tests ?? []) {
+    evidence.push({
+      label: test.status === 'passed' ? 'Verification' : 'Check',
+      value: `${test.command}: ${test.status}${test.output ? ` - ${truncateText(test.output, 140)}` : ''}`,
+      source: 'gstack',
+    });
+  }
+  return evidence.slice(0, 7);
+}
+
+function gstackConfidence(
+  status: GStackInvestigationStatus,
+  result: GStackReviewResult | undefined,
+  evidence: Array<{ label: string; value: string; source?: string }>
+): GStackInvestigationView['confidence'] {
+  if (!result || status === 'not_run' || status === 'queued' || status === 'running') return 'unknown';
+  if (status === 'failed') return 'low';
+  if (result.diagnosis && evidence.length >= 3) return 'high';
+  if (result.summary || evidence.length >= 2) return 'medium';
+  return 'low';
+}
+
+function gstackRecommendedAction(
+  status: GStackInvestigationStatus,
+  result: GStackReviewResult | undefined
+): GStackInvestigationView['recommendedAction'] {
+  if (status === 'queued' || status === 'running') return { type: 'wait', label: 'Wait for the runner callback' };
+  if (!result) return { type: 'autofix', label: 'Investigate with GStack' };
+  const text = `${result.summary} ${result.diagnosis ?? ''}`.toLowerCase();
+  if (status === 'failed' || status === 'blocked') return { type: 'manual', label: 'Review raw GStack output' };
+  if (text.includes('already fixed') || text.includes('no further code change') || text.includes('no code changes required')) {
+    return { type: 'none', label: 'No code action needed' };
+  }
+  return { type: 'autofix', label: 'Run Auto-Fix with this investigation' };
+}
+
+function firstSentence(value: string): string {
+  const sentence = value.match(/^(.+?[.!?])(\s|$)/)?.[1];
+  return sentence ? truncateText(sentence, 180) : truncateText(value, 180);
+}
+
 function currentReportReceipt(report: LiteReport): string {
   const consoleMessage = report.console[0]?.message ?? 'no console error captured';
   const network = report.network[0]
@@ -1159,6 +1352,58 @@ function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
     <ul class="impact-list">${items}</ul>
     <p class="memory-meta">Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
   </section>`;
+}
+
+function renderGStackInvestigationHtml(
+  reportId: string,
+  report: LiteReport,
+  gstackReview: unknown
+): string {
+  const investigation = buildGStackInvestigation(
+    report,
+    isStoredGStackReview(gstackReview) ? gstackReview : null
+  );
+  const evidence = investigation.evidence.length
+    ? investigation.evidence.map((item) => (
+      `<li><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></li>`
+    )).join('')
+    : '<li><span>Evidence</span><strong>Run the investigation to connect browser evidence to repo evidence.</strong></li>';
+  const canTrigger = process.env.GSTACK_UI_TRIGGER_ENABLED === '1';
+  const action = canTrigger
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate">
+        <button class="quiet" type="submit">Investigate with GStack</button>
+      </form>`
+    : '<p class="investigation-disabled">GStack investigation is available through the protected API on this deployment.</p>';
+  const followup = investigation.recommendedAction.type === 'autofix'
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
+        <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
+      </form>`
+    : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
+
+  return `<section class="surface">
+    <div class="surface-head">
+      <h2>GStack Review</h2>
+      <span class="status-pill">${escapeHtml(investigation.status)}</span>
+    </div>
+    <div class="investigation-summary">
+      <strong>${escapeHtml(investigation.headline)}</strong>
+      <p class="root-cause">${escapeHtml(investigation.rootCause)}</p>
+      <p>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
+      <div class="investigation-actions">
+        ${action}
+        ${followup}
+      </div>
+    </div>
+    <ul class="investigation-evidence">${evidence}</ul>
+    <details>
+      <summary>Raw GStack output</summary>
+      <pre>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
+    </details>
+  </section>`;
+}
+
+function isStoredGStackReview(value: unknown): value is StoredGStackReviewRecord {
+  return Boolean(value && typeof value === 'object' && typeof (value as { jobId?: unknown }).jobId === 'string');
 }
 
 function renderAgentComparisonHtml(comparison: AgentComparison): string {
@@ -1230,7 +1475,24 @@ function gstackStatus(gstackReview: unknown): string {
 
 function parseGStackMode(value: unknown): GStackJobMode {
   if (value === 'investigate' || value === 'qa' || value === 'ship') return value;
-  return 'review_fix';
+  if (value === 'review' || value === 'review_fix') return 'review_fix';
+  if (value === 'plan_eng_review') return 'review_fix';
+  return 'investigate';
+}
+
+function requireGStackProductTrigger(
+  request: Request
+): { ok: true } | { ok: false; status: 401 | 403 | 503; error: string; message: string } {
+  if (process.env.GSTACK_UI_TRIGGER_ENABLED === '1') return { ok: true };
+  const configured = requireConfiguredBearer(request, 'GSTACK_TRIGGER_TOKEN');
+  if (configured.ok) return configured;
+  if (configured.status === 401) return configured;
+  return {
+    ok: false,
+    status: 503,
+    error: 'gstack_not_configured',
+    message: 'GSTACK_UI_TRIGGER_ENABLED=1 or GSTACK_TRIGGER_TOKEN is required',
+  };
 }
 
 function requireConfiguredBearer(

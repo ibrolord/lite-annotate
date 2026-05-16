@@ -34,13 +34,19 @@ function repoUrl(repo: string): string {
 }
 
 function reportText(report: PersonBPipelineInput['report']): string {
+  const annotationText = [
+    report.annotation?.target,
+    report.annotation?.selector,
+    report.annotation?.route,
+    report.annotation?.description,
+  ].filter(Boolean).join('\n');
   const consoleText = [...(report.console ?? []), ...(report.consoleLogs ?? [])]
     .map((entry) => `${entry.level ?? ''} ${entry.message ?? entry.msg ?? ''}`)
     .join('\n');
   const networkText = (report.network ?? [])
     .map((entry) => `${entry.method ?? ''} ${entry.url ?? ''} ${entry.status ?? ''}`)
     .join('\n');
-  return [report.title, report.description, report.url, report.route, consoleText, networkText].join('\n');
+  return [report.title, report.description, report.url, report.route, annotationText, consoleText, networkText].join('\n');
 }
 
 function defaultSmokeCommands(report: PersonBPipelineInput['report']): PersonBPipelineInput['smokeCommands'] {
@@ -57,6 +63,24 @@ function defaultSmokeCommands(report: PersonBPipelineInput['report']): PersonBPi
             "const result = formatLoyaltyGreeting('vip-404');",
             "if (!/not found|unavailable|missing/i.test(result)) throw new Error(`Unexpected fallback: ${result}`);",
             'console.log(result);',
+          ].join(' '),
+        ],
+      },
+    ];
+  }
+
+  if (/button|color|colour|background|cta|primary/i.test(text) && /\bblue\b/i.test(text)) {
+    return [
+      {
+        command: process.execPath,
+        args: [
+          '-e',
+          [
+            "const { readFileSync } = require('node:fs');",
+            "const css = readFileSync('./src/styles.css', 'utf8');",
+            "if (!css.includes('.checkout-form .button-primary')) throw new Error('Missing checkout button override');",
+            "if (!css.includes('#2563eb')) throw new Error('Missing blue background token');",
+            "console.log('checkout button blue override present');",
           ].join(' '),
         ],
       },

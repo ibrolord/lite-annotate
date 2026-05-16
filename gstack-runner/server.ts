@@ -27,7 +27,7 @@ app.post('/jobs', async (c) => {
 
   let request: GStackReviewRequest;
   try {
-    request = await c.req.json() as GStackReviewRequest;
+    request = normalizeRunnerRequest(await c.req.json() as Record<string, unknown>);
   } catch {
     return c.json({ error: 'invalid_json', message: 'body must be valid JSON' }, 400);
   }
@@ -132,11 +132,22 @@ function publicRepoUrl(repo: string): string {
 }
 
 function buildClaudePrompt(request: GStackReviewRequest): string {
+  const workflowInstruction = request.mode === 'investigate'
+    ? 'Use /investigate. Do not patch, commit, push, or open a PR. Return the root cause, evidence, confidence, and next action.'
+    : request.mode === 'ship'
+      ? 'Use /investigate first, then /ship only if verification passes and allowPr is true.'
+      : request.mode === 'qa'
+        ? 'Use /investigate first. Use /qa only if the report includes enough runnable app or browser-test context; otherwise explain the QA limitation.'
+        : 'Use /investigate first, then /review to validate the proposed fix or patch context.';
+
   return `Load gstack.
 
-You are running a real remote GStack review for Lite Annotate.
+You are running a real remote GStack workflow for Lite Annotate.
 
-Use the installed GStack workflow skills as applicable:
+Requested workflow: ${request.mode}
+${workflowInstruction}
+
+Installed GStack workflow skills available when applicable:
 - /investigate to establish the root cause before proposing fixes.
 - /plan-eng-review if code changes are required.
 - /review after any patch or proposed patch.
@@ -164,8 +175,13 @@ ${JSON.stringify({
 Expected JSON shape:
 {
   "status": "passed" | "failed" | "blocked",
-  "commandsRun": ["/investigate", "/review"],
+  "commandsRun": ["/investigate"],
+  "headline": "one-sentence user-facing result",
   "summary": "short plain-English result",
+  "rootCause": "user-facing root cause",
+  "confidence": "low|medium|high",
+  "evidence": [{"label":"Browser console|Network|Code|Verification","value":"...","source":"optional"}],
+  "recommendedAction": {"type":"autofix|manual|none","label":"..."},
   "diagnosis": "root cause summary",
   "findings": [{"severity":"high|medium|low","message":"...","file":"optional","line":123}],
   "tests": [{"command":"npm test","status":"passed|failed|skipped","output":"short output"}],
@@ -188,6 +204,11 @@ function parseClaudeResult(job: RunnerJob, output: string): GStackReviewResult {
     mode: job.mode,
     commandsRun: Array.isArray(parsed?.commandsRun) ? parsed.commandsRun.filter((item): item is string => typeof item === 'string') : [],
     summary: typeof parsed?.summary === 'string' ? parsed.summary : 'Claude completed without a parseable GStack result.',
+    headline: typeof parsed?.headline === 'string' ? parsed.headline : undefined,
+    rootCause: typeof parsed?.rootCause === 'string' ? parsed.rootCause : undefined,
+    confidence: parsed?.confidence === 'low' || parsed?.confidence === 'medium' || parsed?.confidence === 'high' ? parsed.confidence : undefined,
+    evidence: Array.isArray(parsed?.evidence) ? parsed.evidence : [],
+    recommendedAction: isRecommendedAction(parsed?.recommendedAction) ? parsed.recommendedAction : undefined,
     diagnosis: typeof parsed?.diagnosis === 'string' ? parsed.diagnosis : undefined,
     findings: Array.isArray(parsed?.findings) ? parsed.findings : [],
     tests: Array.isArray(parsed?.tests) ? parsed.tests : [],
@@ -195,6 +216,13 @@ function parseClaudeResult(job: RunnerJob, output: string): GStackReviewResult {
     commitSha: typeof parsed?.commitSha === 'string' ? parsed.commitSha : undefined,
     completedAt: new Date().toISOString(),
   };
+}
+
+function isRecommendedAction(value: unknown): value is NonNullable<GStackReviewResult['recommendedAction']> {
+  if (!value || typeof value !== 'object') return false;
+  const action = value as { type?: unknown; label?: unknown };
+  return (action.type === 'autofix' || action.type === 'manual' || action.type === 'none')
+    && typeof action.label === 'string';
 }
 
 async function callbackResult(job: RunnerJob, result: GStackReviewResult): Promise<void> {
@@ -269,6 +297,17 @@ function validateRequest(request: GStackReviewRequest): string | null {
   if (!allowed.includes(request.repo)) return `repo is not allowlisted: ${request.repo}`;
   if (!process.env.LITE_ANNOTATE_CALLBACK_URL) return 'LITE_ANNOTATE_CALLBACK_URL is required';
   return null;
+}
+
+function normalizeRunnerRequest(body: Record<string, unknown>): GStackReviewRequest {
+  const mode = parseRunnerMode(body.mode ?? body.workflow);
+  return { ...body, mode } as unknown as GStackReviewRequest;
+}
+
+function parseRunnerMode(value: unknown): GStackReviewRequest['mode'] {
+  if (value === 'investigate' || value === 'qa' || value === 'ship') return value;
+  if (value === 'review' || value === 'review_fix' || value === 'plan_eng_review') return 'review_fix';
+  return 'investigate';
 }
 
 function authorized(request: Request, token: string | undefined): boolean {

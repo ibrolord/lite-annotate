@@ -42,6 +42,21 @@ function safeJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function compactReport(report: ReportLike): ReportLike {
+  return {
+    repo: report.repo,
+    title: report.title,
+    description: report.description,
+    url: report.url,
+    route: report.route,
+    annotation: report.annotation,
+    console: report.console?.slice(0, 8),
+    consoleLogs: report.consoleLogs?.slice(0, 8),
+    network: report.network?.slice(0, 12),
+    session: report.session?.slice(0, 12),
+  };
+}
+
 function targetCandidates(input: CodePatchGeneratorInput): RankedCandidateFile[] {
   const targets = new Set(input.diagnosis.targetFiles);
   const rankedTargets = input.candidates.filter((candidate) => targets.has(candidate.path));
@@ -72,7 +87,7 @@ function promptFor(input: CodePatchGeneratorInput): string {
     '- If the provided files are insufficient, return ok=false with a short error.',
     '',
     'Bug report JSON:',
-    safeJson(input.report),
+    safeJson(compactReport(input.report)),
     '',
     'Diagnosis JSON:',
     safeJson(input.diagnosis),

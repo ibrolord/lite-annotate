@@ -33,6 +33,11 @@ export interface GStackReviewResult extends Record<string, unknown> {
   mode?: GStackJobMode;
   commandsRun: string[];
   summary: string;
+  headline?: string;
+  rootCause?: string;
+  confidence?: 'low' | 'medium' | 'high';
+  evidence?: Array<{ label: string; value: string; source?: string }>;
+  recommendedAction?: { type: 'autofix' | 'manual' | 'none'; label: string };
   diagnosis?: string;
   findings?: Array<{ severity: string; message: string; file?: string; line?: number }>;
   tests?: Array<{ command: string; status: 'passed' | 'failed' | 'skipped'; output?: string }>;

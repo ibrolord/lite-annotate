@@ -55,7 +55,15 @@ function reportText(report: ReportLike): string {
 }
 
 function hasVisualLayoutSignal(report: ReportLike): boolean {
-  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text/i.test(reportText(report));
+  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i.test(reportText(report));
+}
+
+function requestedColor(report: ReportLike): string | null {
+  const text = reportText(report);
+  const hex = text.match(/#[0-9a-f]{3,8}\b/i)?.[0];
+  if (hex) return hex;
+  const named = text.match(/\b(blue|green|red|orange|purple|black|white|yellow)\b/i)?.[1];
+  return named?.toLowerCase() ?? null;
 }
 
 function referencedProperty(report: ReportLike): string | null {
@@ -135,12 +143,13 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
 
   const property = referencedProperty(report);
   const missingProperty = hasMissingPropertyError(report);
-  const visualLayout = hasVisualLayoutSignal(report);
+  const visualLayout = !missingProperty && hasVisualLayoutSignal(report);
+  const color = requestedColor(report);
   const propertyRead = property
     ? firstMeaningfulLine(top.file.content, new RegExp(`\\.${property}\\b`))
     : null;
   const lookupLine = firstMeaningfulLine(top.file.content, /\b(get|find|load|fetch)[A-Za-z0-9_$]*\s*\(/);
-  const styleLine = firstMeaningfulLine(top.file.content, /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap|class=|<h[1-6]\b/i);
+  const styleLine = firstMeaningfulLine(top.file.content, /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap|background|color|\.button|class=|<h[1-6]\b/i);
 
   const evidence = [
     ...consoleMessages(report).slice(0, 2).map((message) => `Console: ${message}`),
@@ -157,14 +166,15 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
       (missingProperty ? 0.15 : 0) +
       (propertyRead ? 0.12 : 0) +
       (visualLayout && styleLine ? 0.11 : 0) +
+      (color && /\.(?:s?css)$/i.test(top.path) ? 0.1 : 0) +
       (top.path.includes('users') || top.path.includes('profile') || top.path.includes('customer') ? 0.08 : 0)
   );
 
   const targetFiles = visualLayout
-    ? candidates
-        .filter((candidate) => /\.(?:html|s?css|jsx|tsx)$/i.test(candidate.path))
-        .slice(0, MAX_TARGET_FILES)
-        .map((candidate) => candidate.path)
+    ? (color
+        ? candidates.filter((candidate) => /\.(?:s?css)$/i.test(candidate.path)).slice(0, 1)
+        : candidates.filter((candidate) => /\.(?:html|s?css|jsx|tsx)$/i.test(candidate.path)).slice(0, MAX_TARGET_FILES)
+      ).map((candidate) => candidate.path)
     : [top.path];
 
   const rootCause = property && propertyRead
@@ -182,7 +192,9 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
     fixStrategy: property
       ? `Add a missing-user guard or fallback before reading ${property}.`
       : visualLayout
-        ? 'Make the smallest markup or stylesheet change that fixes the reported visual layout issue without changing unrelated UI.'
+        ? color
+          ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`
+          : 'Make the smallest markup or stylesheet change that fixes the reported visual layout issue without changing unrelated UI.'
         : 'Add a narrow guard around the failing path identified by the report.',
     confidence,
     shouldPatch: confidence >= PATCH_CONFIDENCE_THRESHOLD,

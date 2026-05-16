@@ -293,7 +293,7 @@ function reportText(report: ReportLike): string {
 }
 
 function reportTokens(report: ReportLike): Set<string> {
-  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'clicking', 'button']);
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'clicking']);
   return new Set(
     reportText(report)
       .toLowerCase()
@@ -354,7 +354,9 @@ function annotationPhrases(report: ReportLike): string[] {
 }
 
 function isVisualLayoutReport(report: ReportLike): boolean {
-  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text/i.test(reportText(report));
+  const text = reportText(report);
+  if (/cannot read properties? of undefined|cannot read property|typeerror|referenceerror/i.test(text)) return false;
+  return /wrap|wrapping|overflow|overlap|layout|spacing|font|line-height|clipped|cut off|responsive|mobile|desktop|visual|text|button|color|colour|background|cta|primary/i.test(text);
 }
 
 function isStylePath(path: string): boolean {
@@ -446,6 +448,12 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
 
       if (visualLayoutReport && isStylePath(file.path) && /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap/i.test(file.content)) {
         addScore(state, 170, 'stylesheet contains visual layout rules relevant to report');
+      }
+
+      if (visualLayoutReport && isStylePath(file.path) && /button|color|colour|background|cta|primary/i.test(reportText(report))) {
+        addScore(state, 1200, 'stylesheet matches visual color/button report');
+        if (/\.button-primary\b/.test(file.content)) addScore(state, 900, 'stylesheet defines primary button styles');
+        if (/\.checkout-form\b/.test(file.content)) addScore(state, 500, 'stylesheet defines checkout form styles');
       }
 
       if (visualLayoutReport && isMarkupPath(file.path) && /<h[1-6]\b|class=|style=|data-view=/i.test(file.content)) {
