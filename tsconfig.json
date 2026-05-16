@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "api/index.ts",
+    "api/gbrain.ts",
+    "api/report_contract.ts",
+    "api/report_store.ts",
+    "tests/**/*.ts"
+  ]
+}

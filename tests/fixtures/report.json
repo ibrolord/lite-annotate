@@ -1,0 +1,52 @@
+{
+  "projectId": "demo",
+  "repo": "ibrolord/lite-annotate-demo",
+  "title": "User profile crashes reading name",
+  "description": "Clicking Load User Profile crashes the dashboard.",
+  "annotation": {
+    "target": "button:Load User Profile",
+    "selector": "button#load-profile",
+    "route": "/users",
+    "x": 128,
+    "y": 244,
+    "viewportX": 128,
+    "viewportY": 244,
+    "elementRect": { "x": 52, "y": 225, "width": 152, "height": 37 }
+  },
+  "url": "https://demo.example.com/users",
+  "route": "/users",
+  "userAgent": "Mozilla/5.0 Lite Annotate Test",
+  "viewport": { "width": 1440, "height": 900 },
+  "console": [
+    {
+      "level": "error",
+      "message": "Cannot read properties of undefined reading 'name'",
+      "timestamp": "2026-05-16T12:00:00.000Z",
+      "source": "window.onerror"
+    }
+  ],
+  "network": [
+    {
+      "type": "fetch",
+      "method": "GET",
+      "url": "/api/users/999",
+      "status": 404,
+      "durationMs": 83,
+      "failed": false,
+      "timestamp": "2026-05-16T12:00:01.000Z"
+    }
+  ],
+  "session": [
+    {
+      "type": "click",
+      "target": "button:Load User Profile",
+      "route": "/users",
+      "timestamp": "2026-05-16T12:00:02.000Z"
+    }
+  ],
+  "screenshot": {
+    "type": "data-url-or-url",
+    "value": "data:image/png;base64,iVBORw0KGgo="
+  },
+  "createdAt": "2026-05-16T12:00:03.000Z"
+}

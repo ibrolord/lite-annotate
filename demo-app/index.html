@@ -2,36 +2,211 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Acme App — User Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lite Annotate Demo</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 60px auto; padding: 0 24px; }
-    h1 { font-size: 24px; margin-bottom: 8px; }
-    p { color: #6b7280; margin-bottom: 24px; }
-    button { padding: 10px 20px; background: #000; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; }
-    button:hover { background: #333; }
-    #output { margin-top: 20px; font-size: 18px; font-weight: 500; }
+    :root { color-scheme: light; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      color: #111827;
+      background: #f8fafc;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 24px 88px;
+    }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    p { color: #4b5563; }
+    button {
+      padding: 10px 18px;
+      background: #111827;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 15px;
+    }
+    button:hover { background: #374151; }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: 24px;
+      align-items: start;
+      margin-top: 28px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 18px;
+    }
+    #output {
+      min-height: 28px;
+      margin-top: 18px;
+      font-size: 17px;
+      font-weight: 600;
+    }
+    .status {
+      margin-top: 12px;
+      color: #6b7280;
+      font-size: 14px;
+    }
+    pre {
+      max-height: 360px;
+      overflow: auto;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    img {
+      max-width: 100%;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+      main { padding-inline: 16px; }
+    }
   </style>
 </head>
 <body>
-  <h1>User Dashboard</h1>
-  <p>Welcome back. View your profile below.</p>
-  <button onclick="loadUser()">Load User Profile</button>
-  <div id="output"></div>
+  <main>
+    <h1>Lite Annotate Demo</h1>
+    <p>Trigger the pinned profile bug, then submit it with the widget in the lower-right corner.</p>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Demo App</h2>
+        <p>Welcome back. View your profile below.</p>
+        <button id="load-profile" onclick="loadUser()">Load User Profile</button>
+        <div id="output"></div>
+        <div class="status" id="bug-status">No report submitted yet.</div>
+      </section>
+
+      <section class="stack">
+        <div class="panel">
+          <h2>Report ID Ready For Worker</h2>
+          <pre id="report-id">Waiting for widget submission...</pre>
+        </div>
+        <div class="panel">
+          <h2>Submitted Payload</h2>
+          <pre id="submitted-payload">Waiting for widget submission...</pre>
+        </div>
+        <div class="panel">
+          <h2>Saved Normalized Report</h2>
+          <pre id="saved-report">Waiting for API response...</pre>
+        </div>
+        <div class="panel">
+          <h2>Page Annotation</h2>
+          <pre id="page-annotation">Waiting for annotation...</pre>
+        </div>
+        <div class="panel">
+          <h2>Console / Network / Session Breadcrumbs</h2>
+          <pre id="breadcrumbs">Waiting for saved report...</pre>
+        </div>
+        <div class="panel">
+          <h2>Screenshot</h2>
+          <div id="screenshot">Waiting for screenshot...</div>
+        </div>
+        <div class="panel">
+          <h2>Memory Entry And Similar Search</h2>
+          <pre id="memory-entry">Waiting for memory write...</pre>
+        </div>
+        <div class="panel">
+          <h2>Person B Handoff</h2>
+          <pre id="handoff">Waiting for handoff payload...</pre>
+        </div>
+      </section>
+    </div>
+  </main>
 
   <script>
-    // THE BUG: find() returns undefined when user id doesn't match
-    // accessing .name on undefined throws TypeError
-    function loadUser() {
+    window.ANNOTATE_API_URL = window.location.protocol === 'file:' ? 'http://localhost:3001' : window.location.origin;
+    window.ANNOTATE_PROJECT_ID = 'demo';
+    window.ANNOTATE_REPO = 'ibrolord/lite-annotate-demo';
+
+    function show(id, value) {
+      const node = document.getElementById(id);
+      node.textContent = typeof value === 'string' ? value : JSON.stringify(displaySafe(value), null, 2);
+    }
+
+    function displaySafe(value) {
+      return JSON.parse(JSON.stringify(value, (key, current) => {
+        if ((key === 'value' || key === 'screenshot') && typeof current === 'string' && current.startsWith('data:image/')) {
+          return `${current.slice(0, 96)}... [truncated for display]`;
+        }
+        if (typeof current === 'string' && current.length > 1200) {
+          return `${current.slice(0, 1200)}... [truncated for display]`;
+        }
+        return current;
+      }));
+    }
+
+    async function loadUser() {
+      console.log('Loading user profile for demo user id=2');
+      const response = await fetch('/api/users/2');
+      if (!response.ok) {
+        console.warn('User lookup returned non-OK status', response.status);
+      }
+
       const users = [{ id: 1, name: 'Alice', role: 'Admin' }];
-      const user = users.find(u => u.id === 2); // always undefined — bug
+      const user = users.find((candidate) => candidate.id === 2);
       document.getElementById('output').textContent = 'Welcome, ' + user.name;
     }
+
+    window.addEventListener('lite-annotate:report-submitted', async (event) => {
+      const { payload, result } = event.detail;
+      const reportId = result.reportId || result.id;
+      document.getElementById('bug-status').textContent = `Submitted report ${reportId}`;
+      show('report-id', { reportId, repo: payload.repo, handoffUrl: result.handoffUrl });
+      show('submitted-payload', payload);
+
+      const [saved, memory, handoff] = await Promise.all([
+        fetch(`${window.ANNOTATE_API_URL}/reports/${encodeURIComponent(reportId)}`).then((res) => res.json()),
+        fetch(`${window.ANNOTATE_API_URL}/reports/${encodeURIComponent(reportId)}/memory`).then((res) => res.json()),
+        fetch(`${window.ANNOTATE_API_URL}/reports/${encodeURIComponent(reportId)}/handoff`).then((res) => res.json()),
+      ]);
+
+      show('saved-report', saved);
+      show('page-annotation', saved.annotation);
+      show('breadcrumbs', {
+        console: saved.console,
+        network: saved.network,
+        session: saved.session,
+      });
+      show('memory-entry', memory);
+      show('handoff', handoff);
+
+      const screenshot = document.getElementById('screenshot');
+      screenshot.innerHTML = '';
+      if (saved.screenshot && saved.screenshot.type === 'data-url-or-url') {
+        const img = document.createElement('img');
+        img.alt = 'Captured report screenshot';
+        img.src = saved.screenshot.value;
+        screenshot.appendChild(img);
+      } else {
+        screenshot.textContent = saved.screenshot ? saved.screenshot.reason : 'No screenshot field';
+      }
+    });
   </script>
-
-  <!-- html2canvas for screenshot capture -->
   <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-
-  <!-- Lite Annotate widget -->
-  <script src="../widget/index.js"></script>
+  <script>
+    const widgetScript = document.createElement('script');
+    widgetScript.src = window.location.protocol === 'file:' ? '../widget/index.js' : '/widget.js';
+    document.body.appendChild(widgetScript);
+  </script>
 </body>
 </html>
