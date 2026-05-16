@@ -188,7 +188,80 @@ test('rankCandidateFiles trusts stack-frame source paths over noisy network rout
     });
 
     assert.equal(ranked[0]?.path, 'src/users.js');
-    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('stack trace references src/users.js')));
+    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('stack frame references src/users.js')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rankCandidateFiles uses console stack fields to rank the crashing commerce module first', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-commerce-index-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'api', 'customers'), { recursive: true });
+
+    writeFileSync(
+      join(root, 'src', 'app.js'),
+      `import { formatLoyaltyGreeting } from './customer.js';
+
+const productGrid = document.getElementById('product-grid');
+productGrid.innerHTML = '<h3>\${product.name}</h3>';
+
+async function loadLoyaltyProfile() {
+  const response = await fetch('/api/customers/vip-404');
+  if (!response.ok) console.warn('loyalty profile lookup returned', response.status);
+  const greeting = formatLoyaltyGreeting('vip-404');
+  document.getElementById('loyalty-status').textContent = greeting;
+}
+`
+    );
+    writeFileSync(
+      join(root, 'src', 'customer.js'),
+      `const customers = [{ id: 'jord-2025', name: 'Jordan Lee' }];
+
+export function getCustomerById(customerId) {
+  return customers.find((customer) => customer.id === customerId);
+}
+
+export function formatLoyaltyGreeting(customerId) {
+  const customer = getCustomerById(customerId);
+  return \`Welcome back, \${customer.name}.\`;
+}
+`
+    );
+    writeFileSync(join(root, 'api', 'customers', 'vip-404.js'), `export default function handler() {}\n`);
+
+    const index = buildCodeIndex(root);
+    const ranked = rankCandidateFiles(index, {
+      title: 'Loyalty profile crashes',
+      description: 'Loading my loyalty profile crashes after the missing customer request.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/account',
+      route: '/account',
+      console: [
+        {
+          level: 'log',
+          message: '[cedar-and-sail] Lite Annotate widget loaded',
+        },
+        {
+          level: 'warn',
+          message: '[cedar-and-sail] loyalty profile lookup returned 404',
+        },
+        {
+          level: 'error',
+          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name')",
+          stack: [
+            "TypeError: Cannot read properties of undefined (reading 'name')",
+            '    at formatLoyaltyGreeting (http://localhost:4174/src/customer.js:16:36)',
+            '    at HTMLButtonElement.loadLoyaltyProfile (http://localhost:4174/src/app.js:137:22)',
+          ].join('\n'),
+        } as any,
+      ],
+      network: [{ method: 'GET', url: '/api/customers/vip-404', status: 404, failed: true }],
+      session: [{ type: 'click', target: 'button#load-loyalty-profile:Load loyalty profile' }],
+    });
+
+    assert.equal(ranked[0]?.path, 'src/customer.js');
+    assert.ok(ranked[0]?.reasons.some((reason) => reason.includes('top stack frame references src/customer.js')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -396,7 +396,13 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
       for (const [index, stackPath] of stackPaths.entries()) {
         if (file.path === stackPath || file.path.endsWith(`/${stackPath}`)) {
           const points = index === 0 ? 5000 : Math.max(1600, 3200 - index * 400);
-          addScore(state, points, `stack trace references ${stackPath}`);
+          addScore(
+            state,
+            points,
+            index === 0
+              ? `top stack frame references ${stackPath}; stack trace references ${stackPath}`
+              : `stack trace references ${stackPath}`
+          );
         }
       }
 

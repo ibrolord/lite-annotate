@@ -78,6 +78,23 @@ function clampConfidence(value: number): number {
   return Math.max(0, Math.min(1, Number(value.toFixed(2))));
 }
 
+function hasGuardBeforePropertyRead(content: string, variableName: string, property: string): boolean {
+  const lines = content.split('\n');
+  const lookupIndex = lines.findIndex((line) =>
+    new RegExp(`\\b(?:const|let|var)\\s+${variableName}\\s*=\\s*(?:get|find|load|fetch)[A-Za-z0-9_$]*\\s*\\(`).test(line)
+  );
+  if (lookupIndex < 0) return false;
+
+  const propertyIndex = lines.findIndex((line, index) =>
+    index > lookupIndex && new RegExp(`\\b${variableName}\\.${property}\\b`).test(line)
+  );
+  if (propertyIndex < 0) return false;
+
+  return lines
+    .slice(lookupIndex + 1, propertyIndex)
+    .some((line) => new RegExp(`if\\s*\\(\\s*!${variableName}\\s*\\)`).test(line));
+}
+
 export function validateDiagnosis(value: Partial<Diagnosis>): DiagnosisValidation {
   const errors: string[] = [];
 
@@ -150,6 +167,9 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
     : null;
   const lookupLine = firstMeaningfulLine(top.file.content, /\b(get|find|load|fetch)[A-Za-z0-9_$]*\s*\(/);
   const styleLine = firstMeaningfulLine(top.file.content, /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap|background|color|\.button|class=|<h[1-6]\b/i);
+  const guardedCurrentCode = property
+    ? hasGuardBeforePropertyRead(top.file.content, 'user', property) || hasGuardBeforePropertyRead(top.file.content, 'customer', property)
+    : false;
 
   const evidence = [
     ...consoleMessages(report).slice(0, 2).map((message) => `Console: ${message}`),
@@ -177,11 +197,13 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
       ).map((candidate) => candidate.path)
     : [top.path];
 
-  const rootCause = property && propertyRead
-    ? `${top.path} dereferences user.${property} when the lookup returns undefined or a missing user.`
-    : visualLayout
-      ? `${top.path} is the highest-ranked UI file for a visual layout report, and the pinned page evidence points to nearby markup or styles.`
-      : `${top.path} is the highest-ranked source file for the report, but the exact failing dereference needs more evidence.`;
+  const rootCause = property && propertyRead && guardedCurrentCode
+    ? `${top.path} is the stack-frame source for the reported missing-record crash, and the current repo already guards the missing record before reading ${property}.`
+    : property && propertyRead
+      ? `${top.path} dereferences user.${property} when the lookup returns undefined or a missing user.`
+      : visualLayout
+        ? `${top.path} is the highest-ranked UI file for a visual layout report, and the pinned page evidence points to nearby markup or styles.`
+        : `${top.path} is the highest-ranked source file for the report, but the exact failing dereference needs more evidence.`;
 
   const diagnosis: Diagnosis = {
     type: 'bug',
@@ -189,13 +211,15 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
     rootCause,
     evidence,
     targetFiles,
-    fixStrategy: property
-      ? `Add a missing-user guard or fallback before reading ${property}.`
-      : visualLayout
-        ? color
-          ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`
-          : 'Make the smallest markup or stylesheet change that fixes the reported visual layout issue without changing unrelated UI.'
-        : 'Add a narrow guard around the failing path identified by the report.',
+    fixStrategy: property && guardedCurrentCode
+      ? `Verify the existing missing-record guard before reading ${property}; patch only if the guard is absent.`
+      : property
+        ? `Add a missing-user guard or fallback before reading ${property}.`
+        : visualLayout
+          ? color
+            ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`
+            : 'Make the smallest markup or stylesheet change that fixes the reported visual layout issue without changing unrelated UI.'
+          : 'Add a narrow guard around the failing path identified by the report.',
     confidence,
     shouldPatch: confidence >= PATCH_CONFIDENCE_THRESHOLD,
   };
