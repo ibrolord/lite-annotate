@@ -125,22 +125,32 @@ GSTACK_RUNNER_TOKEN=<same shared secret as runner GSTACK_RUNNER_TOKEN>
 GSTACK_TRIGGER_TOKEN=<optional-internal-secret-for-api-only-job-starts>
 GSTACK_CALLBACK_TOKEN=<same shared secret as runner LITE_ANNOTATE_CALLBACK_TOKEN>
 GSTACK_ALLOW_PR=0
+GSTACK_UI_TRIGGER_ENABLED=0
 ```
 
 Set `GSTACK_ALLOW_PR=1` only when remote GStack jobs are allowed to open PRs.
 The Lite Annotate trigger endpoint rejects `allowPr: true` unless that flag is
-enabled. If `GSTACK_TRIGGER_TOKEN` is set, API callers must supply it as a bearer
-token; leave it unset for the simple product UI form flow.
+enabled.
+
+Set `GSTACK_UI_TRIGGER_ENABLED=1` only when the report page should show and allow
+the unauthenticated product UI button. Otherwise, product jobs can still be
+started through `POST /reports/:id/gstack/investigate` with
+`Authorization: Bearer $GSTACK_TRIGGER_TOKEN`.
 
 Then the product flow is:
 
 ```text
-POST /reports/:id/gstack-review
+POST /reports/:id/gstack/investigate
   -> remote runner /jobs
-  -> runner executes Claude Code + GStack
+  -> runner executes Claude Code + GStack /investigate
   -> runner callback stores result
-  -> GET /reports/:id/gstack-review shows evidence
+  -> GET /reports/:id/gstack/investigation returns clean UI-ready evidence
 ```
+
+The legacy `POST /reports/:id/gstack-review` and `GET /reports/:id/gstack-review`
+routes remain available for protected/internal callers that need raw runner
+details. They accept `mode` or `workflow` values, but Lite Annotate normalizes the
+product investigation path to `investigate` with `allowPr: false`.
 
 ## Safety Defaults
 
