@@ -1486,8 +1486,6 @@ function renderGStackInvestigationHtml(
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
         <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
       </form>`
-    : investigation.status === 'not_run'
-      ? ''
     : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
 
   return `<section class="surface" id="gstack-review">
