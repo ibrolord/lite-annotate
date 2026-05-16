@@ -12,6 +12,7 @@ export interface AutofixOptions {
   repo?: string;
   workspaceRoot?: string;
   branch?: string;
+  allowedRepos?: string[];
   githubToken?: string;
   githubRepo?: string;
   createPR?: CreatePRFunction;
@@ -33,6 +34,26 @@ function repoUrl(repo: string): string {
   return `https://github.com/${trimmed.replace(/\.git$/i, '')}`;
 }
 
+function normalizeGitHubRepo(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const urlMatch = trimmed.match(/github\.com[/:]([^/\s]+)\/([^/\s#?]+)/i);
+  if (urlMatch) return `${urlMatch[1]}/${urlMatch[2].replace(/\.git$/i, '')}`.toLowerCase();
+
+  const shorthandMatch = trimmed.match(/^([^/\s]+)\/([^/\s]+?)(?:\.git)?$/);
+  if (shorthandMatch) return `${shorthandMatch[1]}/${shorthandMatch[2].replace(/\.git$/i, '')}`.toLowerCase();
+
+  return null;
+}
+
+function envList(name: string): string[] {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function envOptions(): AutofixOptions {
   const runPackageScripts = process.env.AUTOFIX_RUN_PACKAGE_SCRIPTS;
   return {
@@ -40,6 +61,7 @@ function envOptions(): AutofixOptions {
     repo: process.env.TARGET_REPO || process.env.GITHUB_REPO,
     workspaceRoot: process.env.REPO_WORKSPACE_ROOT,
     branch: process.env.TARGET_REPO_BRANCH,
+    allowedRepos: envList('AUTOFIX_ALLOWED_REPOS'),
     githubToken: process.env.GITHUB_TOKEN,
     githubRepo: process.env.GITHUB_REPO,
     runPackageScripts: runPackageScripts === 'true' ? true : runPackageScripts === 'false' ? false : undefined,
@@ -50,6 +72,40 @@ function reportRepo(report: PersonBPipelineInput['report']): string | undefined 
   return typeof report.repo === 'string' && report.repo.trim() ? report.repo.trim() : undefined;
 }
 
+function trustedReportRepo(
+  embeddedRepo: string | undefined,
+  env: AutofixOptions,
+  options: AutofixOptions
+): string | undefined {
+  if (!embeddedRepo) return undefined;
+
+  const normalized = normalizeGitHubRepo(embeddedRepo);
+  const trusted = new Set(
+    [
+      ...(options.allowedRepos ?? env.allowedRepos ?? []),
+      options.repo,
+      options.githubRepo,
+      env.repo,
+      env.githubRepo,
+    ]
+      .map(normalizeGitHubRepo)
+      .filter((value): value is string => Boolean(value))
+  );
+
+  if (trusted.size > 0) {
+    if (!normalized || !trusted.has(normalized)) {
+      throw new Error(`Report repo is not trusted for Auto-Fix PRs: ${embeddedRepo}`);
+    }
+    return normalized;
+  }
+
+  if (options.githubToken ?? env.githubToken) {
+    throw new Error('Auto-Fix PRs require AUTOFIX_ALLOWED_REPOS or TARGET_REPO/GITHUB_REPO before trusting report-provided repos.');
+  }
+
+  return embeddedRepo;
+}
+
 export async function runAutofix(
   bugId: string,
   report: PersonBPipelineInput['report'],
@@ -57,12 +113,13 @@ export async function runAutofix(
 ): Promise<AutofixResult> {
   const embeddedRepo = reportRepo(report);
   const env = envOptions();
+  const trustedEmbeddedRepo = trustedReportRepo(embeddedRepo, env, options);
   const resolvedOptions = {
     ...env,
     ...options,
-    workspacePath: options.workspacePath ?? (embeddedRepo ? undefined : env.workspacePath),
-    repo: options.repo ?? embeddedRepo ?? env.repo,
-    githubRepo: options.githubRepo ?? embeddedRepo ?? env.githubRepo,
+    workspacePath: options.workspacePath ?? (trustedEmbeddedRepo ? undefined : env.workspacePath),
+    repo: options.repo ?? trustedEmbeddedRepo ?? env.repo,
+    githubRepo: options.githubRepo ?? trustedEmbeddedRepo ?? env.githubRepo,
   };
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
@@ -74,7 +131,7 @@ export async function runAutofix(
     branch: resolvedOptions.branch,
     githubToken: resolvedOptions.githubToken,
     smokeCommands: [],
-    runPackageScripts: resolvedOptions.runPackageScripts ?? false,
+    runPackageScripts: resolvedOptions.runPackageScripts,
     codePatchGenerator: resolvedOptions.codePatchGenerator ?? createOpenAICodePatchGeneratorFromEnv(),
   });
 
@@ -109,6 +166,7 @@ export async function runAutofix(
     },
     repoUrl: repoUrl(githubRepo),
     token: resolvedOptions.githubToken,
+    baseBranch: resolvedOptions.branch,
     createPR: resolvedOptions.createPR,
   });
 

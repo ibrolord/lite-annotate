@@ -10,6 +10,7 @@ export interface PRPayload {
   title: string;
   body: string;
   branch: string;
+  baseBranch?: string;
   files: PatchFile[];
 }
 
@@ -39,6 +40,7 @@ export interface OpenVerifiedPROptions {
   report: PRGateReport;
   repoUrl: string;
   token: string;
+  baseBranch?: string;
   createPR?: CreatePRFunction;
 }
 
@@ -115,6 +117,7 @@ function buildPayload(options: OpenVerifiedPROptions): PRPayload {
     title: titleFor(report),
     body: buildPRBody(options),
     branch: `fix/${slug(report.title ?? pipeline.diagnosis.targetFiles.join('-'))}`,
+    baseBranch: options.baseBranch,
     files: pipeline.patch.files.map((file) => ({
       path: file.path,
       content: file.content,
@@ -166,7 +169,7 @@ export async function createDirectGitHubPR(params: {
   const base = `https://api.github.com/repos/${owner}/${repo}`;
 
   const repoInfo = await githubJson<{ default_branch: string }>(base, { headers });
-  const baseBranch = repoInfo.default_branch;
+  const baseBranch = params.payload.baseBranch?.trim() || repoInfo.default_branch;
   const ref = await githubJson<{ object: { sha: string } }>(
     `${base}/git/ref/heads/${encodeURIComponent(baseBranch)}`,
     { headers }

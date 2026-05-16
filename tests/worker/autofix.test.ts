@@ -217,6 +217,37 @@ test('runAutofix dry run verifies but does not call GitHub PR creation', async (
   }
 });
 
+test('runAutofix rejects report-provided repos when PR credentials lack a trusted repo', async () => {
+  await assert.rejects(
+    () => runAutofix('bug_untrusted_repo', { ...report, repo: 'ibrolord/untrusted-demo' }, {
+      githubToken: 'ghs_test',
+      githubRepo: undefined,
+    }),
+    /AUTOFIX_ALLOWED_REPOS|TARGET_REPO\/GITHUB_REPO/
+  );
+});
+
+test('runAutofix allows report-provided repos that match the server allowlist', async () => {
+  const root = makeRepo();
+  try {
+    const result = await runAutofix('bug_trusted_repo', {
+      ...report,
+      repo: 'https://github.com/ibrolord/lite-annotate-demo.git',
+    }, {
+      workspacePath: root,
+      githubToken: 'ghs_test',
+      githubRepo: undefined,
+      skipPR: true,
+      allowedRepos: ['ibrolord/lite-annotate-demo'],
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.verification?.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runAutofix falls back to the report repo when env repo is not configured', async () => {
   const origin = makeGitRepo();
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'lite-annotate-autofix-workspace-'));
@@ -259,6 +290,7 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      runPackageScripts: false,
     });
 
     assert.equal(result.status, 'verified_no_pr');
@@ -386,6 +418,7 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      runPackageScripts: false,
       codePatchGenerator: async ({ candidates, diagnosis }) => {
         const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
         assert.ok(styles);
@@ -408,7 +441,7 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
     assert.equal(result.pipeline.candidates[0]?.path, 'src/styles.css');
     assert.deepEqual(result.pipeline.diagnosis.targetFiles, ['src/styles.css']);
     assert.equal(result.pipeline.patch.ok, true);
-    assert.equal(result.pipeline.patch.source, 'deterministic');
+    assert.equal(result.pipeline.patch.source, 'llm');
     assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css']);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /\.checkout-form \.button-primary/);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /#2563eb/);

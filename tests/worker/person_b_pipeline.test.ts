@@ -143,7 +143,7 @@ test('runPersonBPipeline can use a model patch generator for visual UI fixes', a
   }
 });
 
-test('runPersonBPipeline lets the model choose repo files when local triage is not patchable', async () => {
+test('runPersonBPipeline does not let the model upgrade an unpatchable diagnosis', async () => {
   const root = makeRepo();
   try {
     let called = false;
@@ -196,19 +196,16 @@ test('runPersonBPipeline lets the model choose repo files when local triage is n
       },
     });
 
-    assert.equal(called, true);
-    assert.equal(result.patch.ok, true);
-    assert.equal(result.patch.source, 'llm');
-    assert.deepEqual(result.diagnosis.targetFiles, ['index.html']);
-    assert.equal(result.diagnosis.shouldPatch, true);
-    assert.equal(result.verification?.ok, true);
-    assert.deepEqual(result.verification?.modifiedFiles, ['index.html']);
+    assert.equal(called, false);
+    assert.equal(result.diagnosis.shouldPatch, false);
+    assert.equal(result.patch.ok, false);
+    assert.equal(result.verification, null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('runPersonBPipeline uses fast deterministic CSS patch for noisy color reports before LLM fallback', async () => {
+test('runPersonBPipeline does not fast-patch noisy color reports without patchable diagnosis', async () => {
   const root = makeRepo();
   try {
     let called = false;
@@ -246,11 +243,9 @@ test('runPersonBPipeline uses fast deterministic CSS patch for noisy color repor
     });
 
     assert.equal(called, false);
-    assert.equal(result.patch.ok, true);
-    assert.equal(result.patch.source, 'deterministic');
-    assert.deepEqual(result.diagnosis.targetFiles, ['src/styles.css']);
-    assert.equal(result.verification?.ok, true);
-    assert.deepEqual(result.verification?.modifiedFiles, ['src/styles.css']);
+    assert.equal(result.diagnosis.shouldPatch, false);
+    assert.equal(result.patch.ok, false);
+    assert.equal(result.verification, null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

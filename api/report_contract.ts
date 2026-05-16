@@ -81,7 +81,6 @@ export class ReportValidationError extends Error {
 
 const MAX_BREADCRUMBS = 50;
 const DEFAULT_PROJECT_ID = 'demo';
-const DEFAULT_REPO = 'ibrolord/lite-annotate-demo';
 
 export function normalizeReportPayload(
   payload: unknown,
@@ -106,6 +105,9 @@ export function normalizeReportPayload(
   const userAgent = firstNonEmptyString(input.userAgent, browser.userAgent);
   if (!userAgent) issues.push('userAgent is required');
 
+  const repo = firstNonEmptyString(input.repo, annotation.repo);
+  if (!repo) issues.push('repo is required');
+
   const viewport = normalizeViewport(input.viewport ?? browser.viewport, issues);
   const createdAt = normalizeTimestamp(
     assigned.createdAt ?? input.createdAt ?? browser.timestamp,
@@ -115,7 +117,7 @@ export function normalizeReportPayload(
   const report: LiteReport = {
     id: assigned.id,
     projectId: firstNonEmptyString(input.projectId, annotation.projectId) ?? DEFAULT_PROJECT_ID,
-    repo: firstNonEmptyString(input.repo, annotation.repo) ?? DEFAULT_REPO,
+    repo: repo ?? '',
     title: title ?? '',
     description: firstString(input.description, annotation.description) ?? '',
     annotation: normalizeAnnotation(annotation, title ?? '', firstString(input.description, annotation.description) ?? ''),

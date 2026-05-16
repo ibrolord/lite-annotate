@@ -31,12 +31,6 @@ export interface PersonBPipelineResult {
   verification: PatchVerificationResult | null;
 }
 
-function canRetryDeterministicVisualPatch(diagnosis: Diagnosis): boolean {
-  return diagnosis.targetFiles.length > 0 &&
-    diagnosis.targetFiles.every((file) => /\.(?:s?css)$/i.test(file)) &&
-    /button|background|color|colour|cta|primary/i.test(diagnosis.fixStrategy);
-}
-
 export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<PersonBPipelineResult> {
   if (!input.workspacePath && !input.repo) {
     throw new Error('runPersonBPipeline requires workspacePath or repo');
@@ -54,24 +48,7 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
   let diagnosis = diagnoseReport(input.report, candidates);
   let patch = generatePatchFromDiagnosis(diagnosis, candidates);
   const repoWideModelSelection = input.repoWideModelSelection ?? Boolean(input.codePatchGenerator);
-  if (!patch.ok && repoWideModelSelection && canRetryDeterministicVisualPatch(diagnosis)) {
-    const deterministicDiagnosis: Diagnosis = {
-      ...diagnosis,
-      evidence: [
-        ...diagnosis.evidence,
-        'Deterministic visual patch allowed because the report targets a bounded stylesheet color change.',
-      ],
-      confidence: Math.max(diagnosis.confidence, 0.75),
-      shouldPatch: true,
-      severity: diagnosis.severity === 'low' ? 'medium' : diagnosis.severity,
-    };
-    const deterministicPatch = generatePatchFromDiagnosis(deterministicDiagnosis, candidates);
-    if (deterministicPatch.ok) {
-      diagnosis = deterministicDiagnosis;
-      patch = deterministicPatch;
-    }
-  }
-  const shouldAskModel = input.codePatchGenerator && !patch.ok && (repoWideModelSelection || diagnosis.shouldPatch);
+  const shouldAskModel = input.codePatchGenerator && !patch.ok && diagnosis.shouldPatch;
   if (input.codePatchGenerator && shouldAskModel) {
     const deterministicPatch = patch;
     try {

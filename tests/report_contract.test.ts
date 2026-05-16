@@ -31,6 +31,7 @@ test('rejects payloads that cannot satisfy the shared contract', () => {
     (err) => {
       assert.ok(err instanceof ReportValidationError);
       assert.ok(err.issues.includes('title is required'));
+      assert.ok(err.issues.includes('repo is required'));
       assert.ok(err.issues.includes('url is required'));
       assert.ok(err.issues.includes('userAgent is required'));
       return true;

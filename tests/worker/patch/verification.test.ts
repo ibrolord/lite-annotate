@@ -210,3 +210,44 @@ test('verifyStructuredPatch rejects malformed CSS before PR creation', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('verifyStructuredPatch records sanity checks for TypeScript patches', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-ts-verify-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'App.tsx'), 'export function App() { return <main />; }\n');
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/App.tsx'],
+      files: [{ path: 'src/App.tsx', content: 'export function App() { return <main><h1>Fixed</h1></main>; }\n' }],
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.modifiedFiles, ['src/App.tsx']);
+    assert.ok(result.commands.some((command) => command.name === 'typescript sanity src/App.tsx'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyStructuredPatch rejects malformed TypeScript before PR creation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-ts-verify-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'App.tsx'), 'export function App() { return <main />; }\n');
+
+    const result = verifyStructuredPatch({
+      workspacePath: root,
+      targetFiles: ['src/App.tsx'],
+      files: [{ path: 'src/App.tsx', content: 'export function App() { return (<main>; }\n' }],
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? '', /typescript sanity src\/App\.tsx failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
