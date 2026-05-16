@@ -93,56 +93,48 @@ class GBrainWithMarkdownFallback implements MemoryAdapter {
 
 class GBrainHttpMemoryAdapter implements MemoryAdapter {
   private readonly endpoint = process.env.GBRAIN_MCP_URL!;
-  private readonly token = process.env.GBRAIN_MCP_TOKEN || process.env.GBRAIN_ACCESS_TOKEN;
+  private readonly staticToken = process.env.GBRAIN_MCP_TOKEN || process.env.GBRAIN_ACCESS_TOKEN;
+  private readonly clientId = process.env.GBRAIN_CLIENT_ID;
+  private readonly clientSecret = process.env.GBRAIN_CLIENT_SECRET;
+  private readonly scope = process.env.GBRAIN_OAUTH_SCOPE || 'read write';
+  private readonly putTool = process.env.GBRAIN_PUT_TOOL || 'put_page';
+  private readonly searchTool = process.env.GBRAIN_SEARCH_TOOL || 'search';
+  private tokenCache?: { token: string; expiresAt: number };
+  private discoveredTokenUrl?: string;
 
   async putReport(report: LiteReport): Promise<MemoryEntry> {
-    await this.callTool('put_page', {
-      path: `bugs/${report.id}.md`,
-      title: `Bug: ${report.title}`,
-      content: renderReportMarkdown(report),
-      tags: ['lite-annotate', 'bug-report', report.projectId],
+    const slug = bugSlug(report.id);
+    await this.callTool(this.putTool, {
+      slug,
+      content: renderReportMemoryPage(report),
     });
-    return { provider: 'gbrain', reportId: report.id, path: `bugs/${report.id}.md`, status: 'written' };
+    return { provider: 'gbrain', reportId: report.id, path: slug, status: 'written' };
   }
 
   async searchSimilar(report: LiteReport): Promise<MemorySearchResult[]> {
-    const response = await this.callTool('search', {
+    const response = await this.callTool(this.searchTool, {
       query: reportToSearchText(report),
       limit: 5,
     });
-    const items = Array.isArray(response?.content) ? response.content : Array.isArray(response?.results) ? response.results : [];
-    return items.slice(0, 5).map((item: unknown, index: number) => {
-      const record = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
-      return {
-        provider: 'gbrain' as const,
-        reportId: typeof record.reportId === 'string' ? record.reportId : undefined,
-        score: Number(record.score ?? (5 - index)),
-        title: String(record.title ?? record.name ?? `GBrain result ${index + 1}`),
-        excerpt: String(record.excerpt ?? record.text ?? record.content ?? '').slice(0, 800),
-        path: typeof record.path === 'string' ? record.path : undefined,
-        url: typeof record.url === 'string' ? record.url : undefined,
-      };
-    });
+    return extractGBrainResultItems(response).slice(0, 5).map(normalizeGBrainSearchResult);
   }
 
   async putDiagnosis(reportId: string, diagnosis: unknown): Promise<MemoryEntry> {
-    await this.callTool('put_page', {
-      path: `diagnosis/${safeReportId(reportId)}.md`,
-      title: `Diagnosis: ${reportId}`,
-      content: renderObjectMarkdown(`Diagnosis: ${reportId}`, diagnosis),
-      tags: ['lite-annotate', 'diagnosis'],
+    const slug = `diagnosis/${safeReportId(reportId)}`;
+    await this.callTool(this.putTool, {
+      slug,
+      content: renderObjectMemoryPage(`Diagnosis: ${reportId}`, 'diagnosis', reportId, diagnosis),
     });
-    return { provider: 'gbrain', reportId, path: `diagnosis/${safeReportId(reportId)}.md`, status: 'written' };
+    return { provider: 'gbrain', reportId, path: slug, status: 'written' };
   }
 
   async putOutcome(reportId: string, outcome: unknown): Promise<MemoryEntry> {
-    await this.callTool('put_page', {
-      path: `outcomes/${safeReportId(reportId)}.md`,
-      title: `Outcome: ${reportId}`,
-      content: renderObjectMarkdown(`Outcome: ${reportId}`, outcome),
-      tags: ['lite-annotate', 'outcome'],
+    const slug = `outcomes/${safeReportId(reportId)}`;
+    await this.callTool(this.putTool, {
+      slug,
+      content: renderObjectMemoryPage(`Outcome: ${reportId}`, 'outcome', reportId, outcome),
     });
-    return { provider: 'gbrain', reportId, path: `outcomes/${safeReportId(reportId)}.md`, status: 'written' };
+    return { provider: 'gbrain', reportId, path: slug, status: 'written' };
   }
 
   private async callTool(name: string, args: Record<string, unknown>): Promise<any> {
@@ -150,7 +142,8 @@ class GBrainHttpMemoryAdapter implements MemoryAdapter {
       Accept: 'application/json, text/event-stream',
       'Content-Type': 'application/json',
     };
-    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const token = await this.accessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
 
     const res = await fetch(this.endpoint, {
       method: 'POST',
@@ -171,6 +164,59 @@ class GBrainHttpMemoryAdapter implements MemoryAdapter {
       throw new Error(`GBrain MCP ${name} failed: ${res.status} ${body.slice(0, 300)}`);
     }
     return parseMcpBody(body);
+  }
+
+  private async accessToken(): Promise<string | undefined> {
+    if (this.staticToken) return this.staticToken;
+    if (!this.clientId || !this.clientSecret) return undefined;
+    if (this.tokenCache && this.tokenCache.expiresAt > Date.now()) return this.tokenCache.token;
+
+    const tokenUrl = await this.tokenUrl();
+    const form = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+      scope: this.scope,
+    });
+    const res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`GBrain OAuth token failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const data = parseJsonRecord(text);
+    const token = typeof data.access_token === 'string' ? data.access_token : undefined;
+    if (!token) throw new Error('GBrain OAuth token response missing access_token');
+    const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+    this.tokenCache = {
+      token,
+      expiresAt: Date.now() + Math.max(30, expiresIn - 30) * 1000,
+    };
+    return token;
+  }
+
+  private async tokenUrl(): Promise<string> {
+    const explicit = process.env.GBRAIN_OAUTH_TOKEN_URL || process.env.GBRAIN_TOKEN_URL;
+    if (explicit) return explicit;
+    if (this.discoveredTokenUrl) return this.discoveredTokenUrl;
+
+    const metadataUrl = new URL('/.well-known/oauth-authorization-server', this.endpoint).toString();
+    const res = await fetch(metadataUrl, { headers: { Accept: 'application/json' } });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`GBrain OAuth discovery failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const metadata = parseJsonRecord(text);
+    const tokenEndpoint = typeof metadata.token_endpoint === 'string' ? metadata.token_endpoint : undefined;
+    if (!tokenEndpoint) throw new Error('GBrain OAuth metadata missing token_endpoint');
+    this.discoveredTokenUrl = tokenEndpoint;
+    return tokenEndpoint;
   }
 }
 
@@ -393,6 +439,31 @@ open
 `;
 }
 
+function renderReportMemoryPage(report: LiteReport): string {
+  return `${frontmatter({
+    title: `Bug: ${report.title}`,
+    type: 'bug_report',
+    report_id: report.id,
+    project_id: report.projectId,
+    repo: report.repo,
+    route: report.route,
+    url: report.url,
+    created_at: report.createdAt,
+    tags: ['lite-annotate', 'bug-report', report.projectId],
+  })}
+${renderReportMarkdown(report)}`;
+}
+
+function renderObjectMemoryPage(title: string, type: string, reportId: string, value: unknown): string {
+  return `${frontmatter({
+    title,
+    type,
+    report_id: reportId,
+    tags: ['lite-annotate', type],
+  })}
+${renderObjectMarkdown(title, value)}`;
+}
+
 function renderObjectMarkdown(title: string, value: unknown): string {
   return `# ${title}
 
@@ -403,22 +474,121 @@ ${JSON.stringify(value, null, 2)}
 }
 
 function parseMcpBody(body: string): any {
-  if (!body.trim()) return {};
-  if (body.trimStart().startsWith('event:') || body.includes('\ndata:')) {
-    const dataLine = body.split('\n').find((line) => line.startsWith('data:'));
-    if (!dataLine) return {};
-    return parseJson(dataLine.slice('data:'.length).trim());
+  const response = parseMcpTransportBody(body);
+  const record = asRecord(response);
+  if (record?.error) {
+    throw new Error(`GBrain MCP error: ${formatUnknown(record.error)}`);
   }
-  const parsed = parseJson(body);
-  return parsed.result ?? parsed;
+
+  const result = record && 'result' in record ? record.result : response;
+  const toolResult = asRecord(result);
+  if (toolResult?.isError) {
+    const message = mcpContentText(toolResult) || formatUnknown(toolResult);
+    throw new Error(`GBrain MCP tool error: ${message.slice(0, 500)}`);
+  }
+
+  const text = toolResult ? mcpContentText(toolResult) : undefined;
+  if (text !== undefined) return parseMaybeJson(text);
+  return result ?? {};
 }
 
-function parseJson(value: string): any {
+function parseMcpTransportBody(body: string): unknown {
+  const trimmed = body.trim();
+  if (!trimmed) return {};
+
+  if (trimmed.startsWith('event:') || trimmed.startsWith('data:') || trimmed.includes('\ndata:')) {
+    const parsedEvents = trimmed
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice('data:'.length).trim())
+      .filter((line) => line && line !== '[DONE]')
+      .map(parseMaybeJson);
+    for (let index = parsedEvents.length - 1; index >= 0; index -= 1) {
+      const event = parsedEvents[index];
+      if (asRecord(event)?.result || asRecord(event)?.error) return event;
+    }
+    return parsedEvents[parsedEvents.length - 1] ?? {};
+  }
+
+  return parseMaybeJson(trimmed);
+}
+
+function parseMaybeJson(value: string): any {
   try {
     return JSON.parse(value);
   } catch {
-    return {};
+    return value;
   }
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> {
+  const parsed = parseMaybeJson(value);
+  return asRecord(parsed) ?? {};
+}
+
+function mcpContentText(value: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(value.content)) return undefined;
+  const parts = value.content
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => item.text)
+    .filter((text): text is string => typeof text === 'string');
+  return parts.length ? parts.join('\n') : undefined;
+}
+
+function extractGBrainResultItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  const record = asRecord(value);
+  if (!record) return [];
+  for (const key of ['results', 'items', 'pages', 'refs', 'matches']) {
+    const candidate = record[key];
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
+function normalizeGBrainSearchResult(item: unknown, index: number): MemorySearchResult {
+  const record = asRecord(item) ?? {};
+  const path = firstString(record.slug, record.path, record.file, record.file_path);
+  const title = firstString(record.title, record.name, path) ?? `GBrain result ${index + 1}`;
+  const rawExcerpt = firstString(
+    record.excerpt,
+    record.snippet,
+    record.text,
+    record.content,
+    record.chunk_text,
+    record.compiled_truth
+  ) ?? formatUnknown(record).slice(0, 800);
+  return {
+    provider: 'gbrain',
+    reportId: firstString(record.reportId, record.report_id) ?? reportIdFromPath(path),
+    score: toScore(record.score, record.rank, record.rank_score, record.rrf_score, 5 - index),
+    title,
+    excerpt: rawExcerpt.slice(0, 800),
+    path,
+    url: firstString(record.url),
+  };
+}
+
+function bugSlug(reportId: string): string {
+  return `bugs/${safeReportId(reportId)}`;
+}
+
+function reportIdFromPath(path?: string): string | undefined {
+  return path?.match(/(?:^|\/)(bug_[A-Za-z0-9_-]+)/)?.[1];
+}
+
+function frontmatter(values: Record<string, string | string[]>): string {
+  const lines = Object.entries(values).map(([key, value]) => {
+    if (Array.isArray(value)) return `${key}: [${value.map(yamlString).join(', ')}]`;
+    return `${key}: ${yamlString(value)}`;
+  });
+  return `---\n${lines.join('\n')}\n---\n`;
+}
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
 }
 
 function keywords(value: string): string[] {
@@ -458,4 +628,35 @@ function encodeContentPath(path: string): string {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function toScore(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
