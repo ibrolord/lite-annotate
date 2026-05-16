@@ -116,6 +116,41 @@ test('GStack review endpoint creates remote job and callback stores result', asy
   }
 });
 
+test('GStack review trigger fails closed when trigger token is not configured', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-trigger-token-'));
+  const oldEnv = snapshotEnv(['MEMORY_DIR', 'MEMORY_PROVIDER', 'GSTACK_TRIGGER_TOKEN']);
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  delete process.env.GSTACK_TRIGGER_TOKEN;
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+
+    const response = await app.request(`/reports/${posted.reportId}/gstack-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'review_fix', allowPr: false }),
+    });
+
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.error, 'gstack_not_configured');
+    assert.equal(body.message, 'GSTACK_TRIGGER_TOKEN is not configured');
+  } finally {
+    restoreEnv(oldEnv);
+  }
+});
+
 test('GStack callback rejects invalid JSON without changing report state', async () => {
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-callback-json-'));

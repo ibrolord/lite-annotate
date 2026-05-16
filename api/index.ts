@@ -1142,7 +1142,9 @@ function requireConfiguredBearer(
   envName: string
 ): { ok: true } | { ok: false; status: 401 | 503; error: string; message: string } {
   const expected = process.env[envName];
-  if (!expected) return { ok: true };
+  if (!expected) {
+    return { ok: false, status: 503, error: 'gstack_not_configured', message: `${envName} is not configured` };
+  }
   const actual = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
   if (actual !== expected) {
     return { ok: false, status: 401, error: 'unauthorized', message: 'invalid internal token' };
