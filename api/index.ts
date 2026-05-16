@@ -416,10 +416,10 @@ function renderReportHtml(
       color-scheme: light;
       --ink: oklch(0.21 0.018 248);
       --muted: oklch(0.46 0.022 248);
-      --canvas: oklch(0.985 0.006 248);
-      --panel: oklch(0.998 0.004 248);
-      --line: oklch(0.89 0.012 248);
-      --soft: oklch(0.955 0.012 248);
+      --canvas: oklch(0.982 0.006 248);
+      --panel: oklch(0.998 0.003 248);
+      --line: oklch(0.88 0.012 248);
+      --soft: oklch(0.952 0.01 248);
       --accent: oklch(0.51 0.17 258);
       --danger: oklch(0.52 0.19 28);
       --warn: oklch(0.64 0.13 70);
@@ -428,34 +428,163 @@ function renderReportHtml(
       --code-text: oklch(0.93 0.012 248);
     }
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; color: var(--ink); background: var(--canvas); }
-    main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 72px; }
-    h1 { font-size: 26px; line-height: 1.12; margin: 0 0 8px; letter-spacing: 0; }
-    h2 { margin: 0 0 12px; font-size: 16px; }
-    h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      color: var(--ink);
+      background: linear-gradient(180deg, oklch(0.995 0.004 248), var(--canvas) 360px);
+    }
+    main { max-width: 1240px; margin: 0 auto; padding: 26px 20px 72px; }
+    h1 { font-size: 28px; line-height: 1.08; margin: 0 0 8px; letter-spacing: 0; max-width: 760px; }
+    h2 { margin: 0; font-size: 15px; }
+    h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
     p { margin: 0; color: var(--muted); line-height: 1.5; }
     a { color: var(--accent); }
     a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
-    .subnav { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+    header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+    .subnav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
     form { margin: 0; }
     button { min-height: 42px; border-radius: 6px; padding: 0 13px; font: 700 14px system-ui, sans-serif; cursor: pointer; }
     .safe { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
     .danger { border: 1px solid oklch(0.78 0.1 28); background: oklch(0.985 0.015 28); color: var(--danger); }
-    .layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(360px, 1.1fr); gap: 18px; align-items: start; }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 10px 30px oklch(0.45 0.05 248 / .08); }
-    .stack { display: grid; gap: 14px; }
-    .brief-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .brief-item { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); min-height: 82px; }
-    .brief-item span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
-    .brief-item strong { display: block; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
-    .action-note { display: grid; gap: 8px; margin-top: 12px; }
-    .callout { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--soft); }
-    .callout strong { display: block; margin-bottom: 4px; }
-    .memory-impact ul, .receipt-list, .agent-list { padding-left: 18px; margin: 10px 0 0; color: var(--ink); }
-    .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .comparison > div { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--soft); }
+    .stage-layout { display: grid; grid-template-columns: minmax(0, .62fr) minmax(300px, .38fr); gap: 18px; align-items: start; margin-bottom: 18px; }
+    .layout { display: grid; grid-template-columns: minmax(300px, .42fr) minmax(0, .58fr); gap: 18px; align-items: start; }
+    .inspector { position: sticky; top: 18px; display: grid; gap: 12px; }
+    .stack { display: grid; gap: 12px; min-width: 0; }
+    .surface { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: 0 16px 34px oklch(0.42 0.04 248 / .07); }
+    .surface-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .evidence-list, .safety-list { display: grid; }
+    .evidence-row, .safety-row {
+      display: grid;
+      grid-template-columns: 132px 1fr;
+      gap: 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      align-items: baseline;
+    }
+    .evidence-row:last-child, .safety-row:last-child { border-bottom: 0; }
+    .evidence-row span, .safety-row span, .memory-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .evidence-row strong, .safety-row strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .safety-row p { margin-top: 3px; }
+    .analysis-body { padding: 14px 16px 16px; }
+    .screen-stage { padding: 16px; }
+    .screen-frame {
+      min-height: 380px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background:
+        linear-gradient(45deg, oklch(0.95 0.008 248) 25%, transparent 25%),
+        linear-gradient(-45deg, oklch(0.95 0.008 248) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, oklch(0.95 0.008 248) 75%),
+        linear-gradient(-45deg, transparent 75%, oklch(0.95 0.008 248) 75%),
+        var(--panel);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+    }
+    .screen-frame img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 620px;
+      object-fit: contain;
+      background: var(--panel);
+    }
+    .screen-empty {
+      display: grid;
+      gap: 8px;
+      justify-items: center;
+      padding: 32px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .screen-empty strong { color: var(--ink); }
+    .screen-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .screen-meta span {
+      display: inline-flex;
+      min-height: 26px;
+      align-items: center;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .stage-note { padding: 16px; display: grid; gap: 12px; }
+    .stage-note p { font-size: 14px; }
+    .memory-impact { display: grid; gap: 14px; padding: 16px; }
+    .memory-headline { display: grid; gap: 5px; }
+    .memory-headline strong { font-size: 18px; line-height: 1.25; }
+    .memory-headline small, .memory-meta { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .memory-excerpt { max-width: 80ch; }
+    .impact-list, .agent-list, .receipt-list { margin: 0; padding: 0; list-style: none; }
+    .impact-list { display: grid; border-block: 1px solid var(--line); }
+    .impact-list li { padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--ink); line-height: 1.4; }
+    .impact-list li:last-child { border-bottom: 0; }
+    .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+    .agent-column { padding: 16px; border-right: 1px solid var(--line); }
+    .agent-column:last-child { border-right: 0; }
+    .agent-list { counter-reset: step; display: grid; gap: 9px; margin: 12px 0; }
+    .agent-list li {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 8px;
+      color: var(--ink);
+      line-height: 1.35;
+    }
+    .agent-list li::before {
+      content: counter(step);
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 760;
+    }
+    .agent-column p + p { margin-top: 8px; }
+    .receipt-list { counter-reset: receipt; display: grid; }
+    .receipt-list li {
+      counter-increment: receipt;
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 10px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      line-height: 1.4;
+    }
+    .receipt-list li:last-child { border-bottom: 0; }
+    .receipt-list li::before {
+      content: counter(receipt, decimal-leading-zero);
+      color: var(--muted);
+      font: 760 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .receipt-list strong { display: block; margin-bottom: 3px; }
     details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
     summary { cursor: pointer; padding: 14px 16px; font-weight: 700; }
     .raw-label { margin: 0 16px 8px; }
@@ -465,8 +594,15 @@ function renderReportHtml(
     @media (max-width: 900px) {
       header { display: block; }
       .actions { justify-content: flex-start; margin-top: 14px; }
+      .stage-layout,
       .layout { grid-template-columns: 1fr; }
-      .brief-grid, .comparison { grid-template-columns: 1fr; }
+      .inspector { position: static; }
+      .comparison { grid-template-columns: 1fr; }
+      .agent-column { border-right: 0; border-bottom: 1px solid var(--line); }
+      .agent-column:last-child { border-bottom: 0; }
+    }
+    @media (max-width: 560px) {
+      .evidence-row, .safety-row { grid-template-columns: 1fr; gap: 4px; }
     }
   </style>
 </head>
@@ -490,41 +626,74 @@ function renderReportHtml(
         </form>
       </div>
     </header>
+    <section class="stage-layout" aria-label="Captured bug context">
+      <section class="surface">
+        <div class="surface-head">
+          <h2>Captured screen</h2>
+          <span class="status-pill">${escapeHtml(screenshotStatus(report))}</span>
+        </div>
+        ${renderScreenshotStage(report)}
+      </section>
+      <section class="surface">
+        <div class="surface-head">
+          <h2>Interaction summary</h2>
+        </div>
+        <div class="stage-note">
+          <p><strong>${escapeHtml(report.annotation.target || 'No page target pinned')}</strong></p>
+          <p>${escapeHtml(report.console[0]?.message || 'No console error captured')}</p>
+          <p>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} returned ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</p>
+        </div>
+      </section>
+    </section>
     <div class="layout">
-      <aside class="stack">
-        <section class="panel">
-          <h2>Evidence brief</h2>
-          <div class="brief-grid">
-            <div class="brief-item"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
-            <div class="brief-item"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
-            <div class="brief-item"><span>Browser error</span><strong>${escapeHtml(report.console[0]?.message || 'No console error captured')}</strong></div>
-            <div class="brief-item"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
+      <aside class="inspector">
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Evidence brief</h2>
+          </div>
+          <div class="evidence-list">
+            <div class="evidence-row"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
+            <div class="evidence-row"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
+            <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(report.console[0]?.message || 'No console error captured')}</strong></div>
+            <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
           </div>
         </section>
-        <section class="panel">
-          <h2>Action safety</h2>
-          <div class="action-note">
-            <div class="callout"><strong>Safe validation</strong><p>Dry run analysis verifies diagnosis and patch gates without opening a public PR.</p></div>
-            <div class="callout"><strong>PR-opening action</strong><p>Run analysis can open a GitHub PR when credentials and verification gates allow it.</p></div>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Action safety</h2>
+          </div>
+          <div class="safety-list">
+            <div class="safety-row"><span>Safe validation</span><div><strong>Dry run analysis</strong><p>Verifies diagnosis and patch gates without opening a public PR.</p></div></div>
+            <div class="safety-row"><span>PR-opening action</span><div><strong>Run analysis</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
           </div>
         </section>
-        <section class="panel">
-          <h2>Analysis Result</h2>
-          <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
-          <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Analysis Result</h2>
+            <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
+          </div>
+          <div class="analysis-body">
+            <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
+          </div>
         </section>
       </aside>
       <section class="stack">
-        <section class="panel">
-          <h2>Memory Impact</h2>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Memory Impact</h2>
+          </div>
           ${renderMemoryImpactHtml(memoryImpact)}
         </section>
-        <section class="panel">
-          <h2>Cold Agent vs Memory Agent</h2>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Cold Agent vs Memory Agent</h2>
+          </div>
           ${renderAgentComparisonHtml(agentComparison)}
         </section>
-        <section class="panel">
-          <h2>Memory Receipts</h2>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Memory Receipts</h2>
+          </div>
           ${renderMemoryReceiptsHtml(memoryReceipts)}
         </section>
         <details open>
@@ -767,27 +936,30 @@ function summarizeStoredAutofix(autofix: unknown): {
 
 function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
   const top = summary.topMemory
-    ? `<p><strong>${escapeHtml(summary.headline)}</strong>: ${escapeHtml(summary.topMemory.title)} <span>(${escapeHtml(summary.topMemory.provider)}, score ${summary.topMemory.score})</span></p>
-       <p>${escapeHtml(truncateText(summary.topMemory.excerpt, 220))}</p>`
-    : `<p><strong>${escapeHtml(summary.headline)}</strong></p>`;
+    ? `<div class="memory-headline">
+        <strong>${escapeHtml(summary.headline)}</strong>
+        <small>${escapeHtml(summary.topMemory.title)} (${escapeHtml(summary.topMemory.provider)}, score ${summary.topMemory.score})</small>
+      </div>
+      <p class="memory-excerpt">${escapeHtml(truncateText(summary.topMemory.excerpt, 220))}</p>`
+    : `<div class="memory-headline"><strong>${escapeHtml(summary.headline)}</strong></div>`;
   const items = summary.impact.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
 
   return `<section class="memory-impact">
     ${top}
-    <ul>${items}</ul>
-    <p>Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
+    <ul class="impact-list">${items}</ul>
+    <p class="memory-meta">Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
   </section>`;
 }
 
 function renderAgentComparisonHtml(comparison: AgentComparison): string {
   return `<section class="comparison">
-    <div>
+    <div class="agent-column">
       <h3>${escapeHtml(comparison.cold.label)}</h3>
       <ol class="agent-list">${comparison.cold.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
       <p>${escapeHtml(comparison.cold.limitation)}</p>
       <p>${escapeHtml(comparison.cold.outcome)}</p>
     </div>
-    <div>
+    <div class="agent-column">
       <h3>${escapeHtml(comparison.memory.label)}</h3>
       <ol class="agent-list">${comparison.memory.path.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
       <p>${escapeHtml(comparison.memory.advantage)}</p>
@@ -799,9 +971,39 @@ function renderAgentComparisonHtml(comparison: AgentComparison): string {
 function renderMemoryReceiptsHtml(receipts: MemoryReceipt[]): string {
   return `<section>
     <ul class="receipt-list">${receipts.map((receipt) => (
-      `<li><strong>${escapeHtml(receipt.label)}</strong>: ${escapeHtml(truncateText(receipt.detail, 220))}</li>`
+      `<li><div><strong>${escapeHtml(receipt.label)}</strong><span>${escapeHtml(truncateText(receipt.detail, 220))}</span></div></li>`
     )).join('')}</ul>
   </section>`;
+}
+
+function renderScreenshotStage(report: LiteReport): string {
+  const viewport = `${report.viewport.width} x ${report.viewport.height}`;
+  const annotation = report.annotation.viewportX !== undefined && report.annotation.viewportY !== undefined
+    ? `pin ${report.annotation.viewportX}, ${report.annotation.viewportY}`
+    : 'no pin';
+  const frame = isRenderableScreenshot(report)
+    ? `<img src="${escapeHtml(report.screenshot.value)}" alt="Captured screenshot for ${escapeHtml(report.title)}" />`
+    : `<div class="screen-empty"><strong>Screenshot not available</strong><span>${escapeHtml(report.screenshot.reason || 'Capture was missing or too small to render.')}</span></div>`;
+
+  return `<div class="screen-stage">
+    <div class="screen-frame">${frame}</div>
+    <div class="screen-meta">
+      <span>${escapeHtml(viewport)}</span>
+      <span>${escapeHtml(annotation)}</span>
+      <span>${escapeHtml(report.route)}</span>
+    </div>
+  </div>`;
+}
+
+function screenshotStatus(report: LiteReport): string {
+  return isRenderableScreenshot(report) ? 'screenshot' : 'not available';
+}
+
+function isRenderableScreenshot(report: LiteReport): report is LiteReport & { screenshot: { type: 'data-url-or-url'; value: string } } {
+  const value = report.screenshot.value;
+  if (report.screenshot.type !== 'data-url-or-url' || !value) return false;
+  if (/^https?:\/\//.test(value)) return true;
+  return value.startsWith('data:image/') && value.length > 120;
 }
 
 function analysisStatus(autofix: unknown): string {

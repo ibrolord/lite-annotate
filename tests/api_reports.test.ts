@@ -131,6 +131,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const viewBeforeHtml = await viewBefore.text();
     assert.match(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, /Dry run analysis/);
+    assert.match(viewBeforeHtml, /Captured screen/);
+    assert.match(viewBeforeHtml, /Interaction summary/);
     assert.match(viewBeforeHtml, /Evidence brief/);
     assert.match(viewBeforeHtml, /Safe validation/);
     assert.match(viewBeforeHtml, /PR-opening action/);
