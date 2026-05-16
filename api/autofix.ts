@@ -153,6 +153,18 @@ export async function runAutofix(
     return { status: 'diagnosis_only', pipeline, pr: null };
   }
 
+  if (pipeline.verification.modifiedFiles.length === 0) {
+    console.log('[autofix] verified locally; no repository changes produced, skipping PR');
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'skipped',
+      detail: 'No repository changes were produced; the target may already match the requested fix.',
+      at: new Date().toISOString(),
+    });
+    return { status: 'verified_no_pr', pipeline, pr: null };
+  }
+
   if (resolvedOptions.skipPR) {
     console.log('[autofix] verified locally; dry run requested, skipping PR');
     await resolvedOptions.onStage?.({

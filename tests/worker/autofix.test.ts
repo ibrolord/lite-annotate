@@ -217,6 +217,61 @@ test('runAutofix dry run verifies but does not call GitHub PR creation', async (
   }
 });
 
+test('runAutofix skips PR with a clear no-change reason when patch content already matches', async () => {
+  const root = makeCommerceRepo();
+  try {
+    let calls = 0;
+    const prStages: string[] = [];
+    const result = await runAutofix('bug_checkout_button_already_blue', {
+      title: 'Checkout button should be blue',
+      description: 'On /checkout, the Place demo order primary button should use a blue background.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
+      route: '/checkout',
+      annotation: {
+        target: 'form#checkout-form:Email Name Address Place demo order',
+        selector: 'form#checkout-form',
+        route: '/checkout',
+      },
+      console: [],
+      network: [],
+      session: [{ type: 'click', target: 'button:Report a bug with technical context' }],
+    }, {
+      workspacePath: root,
+      githubToken: 'ghs_test',
+      githubRepo: 'ibrolord/lite-annotate-demo',
+      runPackageScripts: false,
+      codePatchGenerator: async ({ candidates, diagnosis }) => {
+        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
+        assert.ok(styles);
+        assert.deepEqual(diagnosis.targetFiles, ['src/styles.css']);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          files: [{ path: 'src/styles.css', content: styles.file.content }],
+        };
+      },
+      createPR: async () => {
+        calls += 1;
+        throw new Error('no-change patch should not create PR');
+      },
+      onStage: async (stage) => {
+        if (stage.key === 'pr' && stage.detail) prStages.push(stage.detail);
+      },
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(calls, 0);
+    assert.equal(result.pr, null);
+    assert.equal(result.prError, undefined);
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, []);
+    assert.ok(prStages.some((detail) => /No repository changes were produced/.test(detail)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runAutofix rejects report-provided repos when PR credentials lack a trusted repo', async () => {
   await assert.rejects(
     () => runAutofix('bug_untrusted_repo', { ...report, repo: 'ibrolord/untrusted-demo' }, {
