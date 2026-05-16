@@ -46,7 +46,7 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
   const candidates = rankCandidateFiles(index, input.report);
   const diagnosis = diagnoseReport(input.report, candidates);
   let patch = generatePatchFromDiagnosis(diagnosis, candidates);
-  if (input.codePatchGenerator && diagnosis.shouldPatch) {
+  if (input.codePatchGenerator && diagnosis.shouldPatch && !patch.ok) {
     const deterministicPatch = patch;
     try {
       const modelPatch = await input.codePatchGenerator({ report: input.report, diagnosis, candidates });
