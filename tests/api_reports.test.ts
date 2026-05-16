@@ -134,6 +134,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Captured screen/);
     assert.match(viewBeforeHtml, /Interaction summary/);
     assert.match(viewBeforeHtml, /Evidence brief/);
+    assert.match(viewBeforeHtml, /Target repo/);
+    assert.match(viewBeforeHtml, new RegExp(`action="/reports/${postBody.reportId}/repo"`));
+    assert.match(viewBeforeHtml, /ibrolord\/lite-annotate-demo/);
     assert.match(viewBeforeHtml, /Safe validation/);
     assert.match(viewBeforeHtml, /PR-opening action/);
     assert.match(viewBeforeHtml, /Raw payloads/);
@@ -187,4 +190,51 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
     else process.env.MEMORY_PROVIDER = oldProvider;
   }
+});
+
+test('POST /reports/:id/repo updates the Auto-Fix target repo shown on the report page', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-repo-api-'));
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  const post = await app.request('/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fixture),
+  });
+  const postBody = await post.json();
+
+  const update = await app.request(`/reports/${postBody.reportId}/repo`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ repo: 'https://github.com/ibrolord/custom-shop.git' }).toString(),
+  });
+  assert.equal(update.status, 200);
+  assert.deepEqual(await update.json(), {
+    reportId: postBody.reportId,
+    repo: 'ibrolord/custom-shop',
+  });
+
+  const get = await app.request(`/reports/${postBody.reportId}`);
+  const report = await get.json();
+  assert.equal(report.repo, 'ibrolord/custom-shop');
+
+  const view = await app.request(`/reports/${postBody.reportId}/view`);
+  const html = await view.text();
+  assert.match(html, /Target repo/);
+  assert.match(html, /ibrolord\/custom-shop/);
+
+  const invalid = await app.request(`/reports/${postBody.reportId}/repo`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ repo: 'not a repo' }).toString(),
+  });
+  assert.equal(invalid.status, 400);
 });

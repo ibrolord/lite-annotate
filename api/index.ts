@@ -113,6 +113,38 @@ export function createApp(deps: {
     return c.json({ report: record.report, raw: record.raw, memory: record.memory });
   });
 
+  app.post('/reports/:id/repo', async (c) => {
+    const reportId = c.req.param('id');
+    const record = await store.get(reportId);
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    const body = await c.req.parseBody();
+    const repo = normalizeEditableRepo(body.repo);
+    if (!repo) {
+      return c.json({
+        error: 'invalid_repo',
+        message: 'Repo must be a GitHub owner/repo value, for example ibrolord/lite-annotate-commerce-demo.',
+      }, 400);
+    }
+
+    const updated = await store.update(reportId, (current) => ({
+      ...current,
+      report: {
+        ...current.report,
+        repo,
+      },
+      raw: updateRawRepo(current.raw, repo),
+      autofix: undefined,
+      gstackReview: undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    if (c.req.header('accept')?.includes('application/json')) {
+      return c.json({ reportId: updated?.report.id ?? reportId, repo: updated?.report.repo ?? repo });
+    }
+    return c.redirect(`/reports/${encodeURIComponent(reportId)}/view`, 303);
+  });
+
   app.get('/reports/:id/memory', async (c) => {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
@@ -498,6 +530,32 @@ function shortUrl(value: string): string {
   }
 }
 
+function normalizeEditableRepo(value: unknown): string | null {
+  const repo = typeof value === 'string' ? value.trim() : '';
+  if (!repo) return null;
+
+  const ownerRepo = repo.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+  if (ownerRepo) return safeRepoSegments(ownerRepo[1], ownerRepo[2]);
+
+  const httpsRepo = repo.match(/^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i);
+  if (httpsRepo) return safeRepoSegments(httpsRepo[1], httpsRepo[2]);
+
+  const sshRepo = repo.match(/^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/i);
+  if (sshRepo) return safeRepoSegments(sshRepo[1], sshRepo[2]);
+
+  return null;
+}
+
+function safeRepoSegments(owner: string, repo: string): string | null {
+  if ([owner, repo].some((segment) => !segment || segment === '.' || segment === '..')) return null;
+  return `${owner}/${repo}`;
+}
+
+function updateRawRepo(raw: unknown, repo: string): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  return { ...raw, repo };
+}
+
 function renderReportHtml(
   reportId: string,
   report: LiteReport,
@@ -545,7 +603,7 @@ function renderReportHtml(
     h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
     p { margin: 0; color: var(--muted); line-height: 1.5; }
     a { color: var(--accent); }
-    a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
     header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
     .subnav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
@@ -553,6 +611,16 @@ function renderReportHtml(
     button { min-height: 42px; border-radius: 6px; padding: 0 13px; font: 700 14px system-ui, sans-serif; cursor: pointer; }
     .safe { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
     .danger { border: 1px solid oklch(0.78 0.1 28); background: oklch(0.985 0.015 28); color: var(--danger); }
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 11px;
+      background: var(--panel);
+      color: var(--ink);
+      font: 650 14px system-ui, sans-serif;
+    }
     .stage-layout { display: grid; grid-template-columns: minmax(0, .62fr) minmax(300px, .38fr); gap: 18px; align-items: start; margin-bottom: 18px; }
     .layout { display: grid; grid-template-columns: minmax(300px, .42fr) minmax(0, .58fr); gap: 18px; align-items: start; }
     .inspector { position: sticky; top: 18px; display: grid; gap: 12px; }
@@ -583,6 +651,16 @@ function renderReportHtml(
       overflow-wrap: anywhere;
     }
     .safety-row p { margin-top: 3px; }
+    .repo-form { display: grid; gap: 10px; padding: 14px 16px 16px; }
+    .repo-form label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .repo-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+    .repo-form button { border: 1px solid var(--line); background: var(--soft); color: var(--ink); }
     .analysis-body { padding: 14px 16px 16px; }
     .screen-stage { padding: 16px; }
     .screen-frame {
@@ -708,6 +786,7 @@ function renderReportHtml(
     }
     @media (max-width: 560px) {
       .evidence-row, .safety-row { grid-template-columns: 1fr; gap: 4px; }
+      .repo-control { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -758,10 +837,25 @@ function renderReportHtml(
           </div>
           <div class="evidence-list">
             <div class="evidence-row"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
+            <div class="evidence-row"><span>Target repo</span><strong>${escapeHtml(report.repo)}</strong></div>
             <div class="evidence-row"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
             <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(report.console[0]?.message || 'No console error captured')}</strong></div>
             <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
           </div>
+        </section>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>Target repo</h2>
+            <span class="status-pill">Auto-Fix input</span>
+          </div>
+          <form class="repo-form" method="post" action="/reports/${encodeURIComponent(reportId)}/repo">
+            <label for="target-repo">GitHub repository</label>
+            <div class="repo-control">
+              <input id="target-repo" name="repo" value="${escapeHtml(report.repo)}" autocomplete="off" spellcheck="false" />
+              <button type="submit">Save repo</button>
+            </div>
+            <p>Dry run analysis and Run analysis use this repository for file ranking, patch verification, and PR creation.</p>
+          </form>
         </section>
         <section class="surface">
           <div class="surface-head">
