@@ -226,8 +226,18 @@ export function createApp(deps: {
 
     const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
     const callbackBaseUrl = process.env.GSTACK_CALLBACK_BASE_URL?.replace(/\/+$/, '') ?? publicBaseUrl;
+    const wantsHtml = requestPrefersHtml(c.req.raw);
     if (!callbackBaseUrl) {
-      return c.json({ error: 'gstack_not_configured', message: 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required' }, 503);
+      const message = 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required';
+      if (wantsHtml) {
+        await store.update(record.report.id, (current) => ({
+          ...current,
+          gstackReview: buildFailedGStackTrigger(record.report.id, message),
+          updatedAt: new Date().toISOString(),
+        }));
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({ error: 'gstack_not_configured', message }, 503);
     }
 
     try {
@@ -247,12 +257,24 @@ export function createApp(deps: {
         gstackReview: mergeQueuedGStackReview(current.gstackReview, job),
         updatedAt: new Date().toISOString(),
       }));
+      if (wantsHtml) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
       return c.json({
         reportId: record.report.id,
         investigation: buildGStackInvestigation(record.report, updated?.gstackReview ?? job),
       }, 202);
     } catch (err) {
-      return c.json({ error: 'gstack_job_failed', message: errorMessage(err) }, 502);
+      const message = errorMessage(err);
+      if (wantsHtml) {
+        await store.update(record.report.id, (current) => ({
+          ...current,
+          gstackReview: buildFailedGStackTrigger(record.report.id, message),
+          updatedAt: new Date().toISOString(),
+        }));
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#gstack-review`, 303);
+      }
+      return c.json({ error: 'gstack_job_failed', message }, 502);
     }
   });
 
@@ -1376,19 +1398,21 @@ function renderGStackInvestigationHtml(
       `<li><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></li>`
     )).join('')
     : '<li><span>Evidence</span><strong>Run the investigation to connect browser evidence to repo evidence.</strong></li>';
-  const canTrigger = process.env.GSTACK_UI_TRIGGER_ENABLED === '1';
-  const action = canTrigger
+  const triggerState = getGStackUiTriggerState();
+  const action = triggerState.enabled
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate">
         <button class="quiet" type="submit">Investigate with GStack</button>
       </form>`
-    : '<p class="investigation-disabled">GStack investigation is available through the protected API on this deployment.</p>';
-  const followup = investigation.recommendedAction.type === 'autofix'
+    : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
+  const followup = investigation.recommendedAction.type === 'autofix' && investigation.raw?.result
     ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
         <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
       </form>`
+    : investigation.status === 'not_run'
+      ? ''
     : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
 
-  return `<section class="surface">
+  return `<section class="surface" id="gstack-review">
     <div class="surface-head">
       <h2>GStack Investigation</h2>
       <span class="status-pill">${escapeHtml(investigation.status)}</span>
@@ -1404,7 +1428,7 @@ function renderGStackInvestigationHtml(
     </div>
     <ul class="investigation-evidence">${evidence}</ul>
     <details>
-      <summary>Raw GStack output</summary>
+      <summary>Runner response</summary>
       <pre>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
     </details>
   </section>`;
@@ -1488,6 +1512,33 @@ function parseGStackMode(value: unknown): GStackJobMode {
   return 'investigate';
 }
 
+function requestPrefersHtml(request: Request): boolean {
+  const accept = request.headers.get('accept') ?? '';
+  return accept.includes('text/html') && !accept.includes('application/json');
+}
+
+function getGStackUiTriggerState(): { enabled: boolean; message: string } {
+  if (process.env.GSTACK_UI_TRIGGER_ENABLED !== '1') {
+    return {
+      enabled: false,
+      message: 'GStack investigation is available through the protected API on this deployment.',
+    };
+  }
+  if (!process.env.GSTACK_RUNNER_URL) {
+    return {
+      enabled: false,
+      message: 'GStack UI trigger is enabled, but GSTACK_RUNNER_URL is not configured.',
+    };
+  }
+  if (!process.env.PUBLIC_BASE_URL && !process.env.GSTACK_CALLBACK_BASE_URL) {
+    return {
+      enabled: false,
+      message: 'GStack UI trigger is enabled, but PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required.',
+    };
+  }
+  return { enabled: true, message: 'GStack investigation can be started from this report.' };
+}
+
 function requireGStackProductTrigger(
   request: Request
 ): { ok: true } | { ok: false; status: 401 | 403 | 503; error: string; message: string } {
@@ -1524,6 +1575,36 @@ function mergeQueuedGStackReview(
 ): StoredGStackReviewRecord {
   if (existing?.jobId === queued.jobId && isTerminalGStackReview(existing)) return existing;
   return queued;
+}
+
+function buildFailedGStackTrigger(reportId: string, message: string): StoredGStackReviewRecord {
+  const now = new Date().toISOString();
+  const jobId = `gstack_trigger_failed_${randomUUID()}`;
+  return {
+    jobId,
+    reportId,
+    status: 'failed',
+    mode: 'investigate',
+    createdAt: now,
+    updatedAt: now,
+    error: message,
+    result: {
+      jobId,
+      reportId,
+      status: 'failed',
+      mode: 'investigate',
+      commandsRun: [],
+      headline: 'GStack investigation could not start.',
+      summary: message,
+      rootCause: message,
+      confidence: 'low',
+      evidence: [{ label: 'GStack trigger', value: message, source: 'lite-annotate' }],
+      recommendedAction: { type: 'manual', label: 'Check GStack deployment configuration' },
+      diagnosis: message,
+      tests: [],
+      completedAt: now,
+    },
+  };
 }
 
 function isTerminalGStackReview(review: StoredGStackReviewRecord): boolean {

@@ -82,6 +82,12 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     assert.equal((runnerRequests[0].body as { callbackUrl: string }).callbackUrl, 'https://lite-annotate.example.com/internal/gstack-callback');
     assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, false);
     assert.equal((runnerRequests[0].body as { mode: string }).mode, 'investigate');
+    assert.equal((runnerRequests[0].body as { repo: string }).repo, fixture.repo);
+    assert.equal((runnerRequests[0].body as { reportUrl: string }).reportUrl, `https://lite-annotate.example.com/reports/${posted.reportId}`);
+    assert.equal((runnerRequests[0].body as { memoryUrl: string }).memoryUrl, `https://lite-annotate.example.com/reports/${posted.reportId}/memory`);
+    assert.equal((runnerRequests[0].body as { handoffUrl: string }).handoffUrl, `https://lite-annotate.example.com/reports/${posted.reportId}/handoff`);
+    assert.equal((runnerRequests[0].body as { report: { id: string; annotation: { target: string } } }).report.id, posted.reportId);
+    assert.equal((runnerRequests[0].body as { report: { annotation: { target: string } } }).report.annotation.target, fixture.annotation.target);
 
     const callback = await app.request('/internal/gstack-callback', {
       method: 'POST',
@@ -133,6 +139,83 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     assert.match(html, /GStack Investigation/);
     assert.match(html, /Missing-user path crashes after a 404/);
     assert.match(html, /Run Auto-Fix with this investigation/);
+    assert.match(html, /id="gstack-review"/);
+    assert.match(html, /Runner response/);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restoreEnv(oldEnv);
+  }
+});
+
+test('GStack investigation button redirects back to the report and shows queued response', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gstack-ui-'));
+  const oldEnv = snapshotEnv([
+    'MEMORY_DIR',
+    'MEMORY_PROVIDER',
+    'GSTACK_RUNNER_URL',
+    'GSTACK_RUNNER_TOKEN',
+    'GSTACK_CALLBACK_TOKEN',
+    'GSTACK_UI_TRIGGER_ENABLED',
+    'PUBLIC_BASE_URL',
+  ]);
+  const oldFetch = globalThis.fetch;
+  const runnerRequests: Array<{ url: string; body: unknown }> = [];
+
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  process.env.GSTACK_RUNNER_URL = 'https://gstack-runner.example.com';
+  process.env.GSTACK_RUNNER_TOKEN = 'runner-secret';
+  process.env.GSTACK_CALLBACK_TOKEN = 'callback-secret';
+  process.env.GSTACK_UI_TRIGGER_ENABLED = '1';
+  process.env.PUBLIC_BASE_URL = 'https://lite-annotate.example.com';
+
+  globalThis.fetch = async (input, init) => {
+    runnerRequests.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)),
+    });
+    return new Response(JSON.stringify({ jobId: 'gstack_job_ui_123', status: 'queued' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({ store, memory: createMemoryAdapter() });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const posted = await post.json();
+
+    const initialView = await app.request(`/reports/${posted.reportId}/view`);
+    const initialHtml = await initialView.text();
+    assert.match(initialHtml, /<button class="quiet" type="submit">Investigate with GStack<\/button>/);
+    assert.doesNotMatch(initialHtml, /GStack investigation is available through the protected API/);
+    assert.doesNotMatch(initialHtml, /<button class="safe" type="submit">Investigate with GStack<\/button>/);
+
+    const create = await app.request(`/reports/${posted.reportId}/gstack/investigate`, {
+      method: 'POST',
+      headers: { Accept: 'text/html' },
+    });
+
+    assert.equal(create.status, 303);
+    assert.equal(create.headers.get('location'), `/reports/${posted.reportId}/view#gstack-review`);
+    assert.equal(runnerRequests.length, 1);
+    assert.equal(runnerRequests[0].url, 'https://gstack-runner.example.com/jobs');
+    assert.equal((runnerRequests[0].body as { mode: string }).mode, 'investigate');
+    assert.equal((runnerRequests[0].body as { allowPr: boolean }).allowPr, false);
+    assert.equal((runnerRequests[0].body as { report: { id: string } }).report.id, posted.reportId);
+
+    const view = await app.request(`/reports/${posted.reportId}/view`);
+    const html = await view.text();
+    assert.match(html, /GStack investigation is queued/);
+    assert.match(html, /gstack_job_ui_123/);
+    assert.match(html, /Runner response/);
   } finally {
     globalThis.fetch = oldFetch;
     restoreEnv(oldEnv);
