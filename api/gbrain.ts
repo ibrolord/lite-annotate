@@ -113,7 +113,7 @@ class GBrainHttpMemoryAdapter implements MemoryAdapter {
 
   async searchSimilar(report: LiteReport): Promise<MemorySearchResult[]> {
     const response = await this.callTool(this.searchTool, {
-      query: reportToSearchText(report),
+      query: gbrainReportSearchText(report),
       limit: 5,
     });
     return extractGBrainResultItems(response).slice(0, 5).map(normalizeGBrainSearchResult);
@@ -566,6 +566,25 @@ function parseGBrainSearchText(value: string): Record<string, unknown>[] {
     });
   }
   return hits;
+}
+
+function gbrainReportSearchText(report: LiteReport): string {
+  const titleAndDescription = [report.title, report.description]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' ');
+  if (titleAndDescription) return compactSearchText(titleAndDescription, 500);
+
+  const firstError = report.console.find((entry) => entry.level === 'error')?.message;
+  return compactSearchText([
+    report.route,
+    report.annotation.target,
+    firstError,
+  ].filter(Boolean).join(' '), 500);
+}
+
+function compactSearchText(value: string, maxLength: number): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 function normalizeGBrainSearchResult(item: unknown, index: number): MemorySearchResult {

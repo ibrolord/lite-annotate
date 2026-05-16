@@ -70,6 +70,10 @@ test('gbrain memory adapter writes pages through HTTP MCP and searches native re
       toolCalls.map((call) => call.tool),
       ['put_page', 'search', 'put_page', 'put_page']
     );
+    assert.equal(
+      toolCalls[1].arguments.query,
+      'User profile crashes reading name Clicking Load User Profile crashes the dashboard.'
+    );
 
     const putReport = toolCalls[0].arguments;
     assert.equal(putReport.slug, 'bugs/bug_memory');
