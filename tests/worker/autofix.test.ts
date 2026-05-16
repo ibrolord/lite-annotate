@@ -99,6 +99,11 @@ export { loadLoyaltyProfile };
 .checkout-form {
   display: grid;
 }
+
+.hero-copy h1 {
+  font-size: clamp(44px, 7vw, 86px);
+  line-height: 0.95;
+}
 `
   );
   writeFileSync(
@@ -391,6 +396,55 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /\.checkout-form \.button-primary/);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /#2563eb/);
     assert.equal(result.pipeline.verification?.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix does not run the profile smoke command for visual ecommerce reports', async () => {
+  const root = makeCommerceRepo();
+  try {
+    const result = await runAutofix('bug_ecommerce_wrapping', {
+      title: 'this text is wrapping weirdly',
+      description: 'The homepage hero headline wraps awkwardly.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/',
+      route: '/',
+      annotation: {
+        target: 'h1: Travel-ready home and carry essentials.',
+        selector: '.hero-copy h1',
+        route: '/',
+      },
+      console: [],
+      network: [],
+      session: [{ type: 'click', target: 'h1: Travel-ready home and carry essentials.' }],
+    }, {
+      workspacePath: root,
+      githubToken: undefined,
+      githubRepo: undefined,
+      runPackageScripts: false,
+      codePatchGenerator: async ({ candidates, diagnosis }) => {
+        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
+        assert.ok(styles);
+        assert.ok(diagnosis.targetFiles.includes('src/styles.css'));
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          files: [
+            {
+              path: 'src/styles.css',
+              content: `${styles.file.content}\n.hero-copy h1 {\n  line-height: 1.08;\n}\n`,
+            },
+          ],
+        };
+      },
+    });
+
+    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.pipeline.patch.source, 'llm');
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.deepEqual(result.pipeline.verification?.commands, []);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/styles.css']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

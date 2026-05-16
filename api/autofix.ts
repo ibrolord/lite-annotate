@@ -87,15 +87,19 @@ function defaultSmokeCommands(report: PersonBPipelineInput['report']): PersonBPi
     ];
   }
 
-  return [
-    {
-      command: process.execPath,
-      args: [
-        '-e',
-        "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))",
-      ],
-    },
-  ];
+  if (/user profile|formatUserGreeting|src\/users\.js|\/api\/users\/999|reading ['"`]?name['"`]?/i.test(text)) {
+    return [
+      {
+        command: process.execPath,
+        args: [
+          '-e',
+          "const { formatUserGreeting } = require('./src/users.js'); console.log(formatUserGreeting(999))",
+        ],
+      },
+    ];
+  }
+
+  return [];
 }
 
 function envOptions(): AutofixOptions {
