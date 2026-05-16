@@ -14,16 +14,46 @@ Customer app
   -> hosted API
   -> report store
   -> GBrain memory
-  -> GStack-powered review worker
+  -> code-context worker
+  -> GStack-powered review workflow
   -> engineering diagnosis
   -> optional GitHub PR
 ```
 
 The product should lead with triage and engineering review. PR creation is the magic moment, but it should not be the only thing that proves value.
 
+## Current Validation Summary
+
+The latest local validation proved:
+
+- GBrain CLI installs and runs locally.
+- GBrain can store bug reports as pages.
+- GBrain keyword search can retrieve similar bug memory.
+- GBrain can import a local repo with `sync --strategy code`.
+- `code_refs` can retrieve a useful code snippet from the indexed repo.
+- GBrain HTTP MCP can run locally and accept authenticated `search` / `code_refs` tool calls.
+
+The validation also showed these limits:
+
+- Embeddings did not run without an embedding provider key.
+- `code_def` did not reliably find JavaScript function definitions in the demo repo.
+- PGLite is fine for local validation, but it is not the right shared hosted backend because the local DB lock can block concurrent CLI/admin operations.
+- Hosted deployment still needs Railway/Render auth, a Postgres/Supabase database, and embedding provider env vars.
+
+See [GBRAIN_VALIDATION.md](GBRAIN_VALIDATION.md) for details.
+
 ## What GBrain Does
 
 GBrain is the memory and retrieval layer.
+
+Use GBrain for:
+
+- Bug report memory.
+- Prior bug retrieval.
+- Diagnosis and PR outcome memory.
+- Code-context retrieval where the indexed operations work, especially `search` and `code_refs`.
+
+Do not make the core demo depend on GBrain being a perfect code intelligence engine.
 
 For the strong version:
 
@@ -31,7 +61,7 @@ For the strong version:
 report submitted
   -> gbrain put / sync
   -> gbrain query for similar prior bugs
-  -> gbrain code lookup for relevant symbols/files
+  -> gbrain code_refs / search for relevant symbols/files
 ```
 
 For the hackathon fallback:
@@ -70,6 +100,25 @@ Do not block the core demo on non-interactive hosted GStack invocation unless th
 
 Do not dump the whole repo into an LLM.
 
+Use a layered repo-context strategy:
+
+```text
+1. GBrain retrieves prior bug memory and any useful code refs.
+2. The worker fetches actual source files from GitHub or a shallow clone.
+3. The worker builds/runs a small code index for fallback ranking.
+4. The fix worker receives only the top 3-5 candidate files.
+```
+
+The reliable product boundary is:
+
+```text
+GBrain = memory + retrieval
+GitHub/source clone = source of truth for file contents
+Worker index = fallback ranking and code map
+GStack workflow = investigate/review/ship process
+Claude = diagnosis and patch generation
+```
+
 Build a small code map first:
 
 ```text
@@ -77,7 +126,7 @@ repo connected
   -> clone or fetch source
   -> parse files with AST tooling where possible
   -> extract routes, imports, exports, functions, components, symbols
-  -> store compact index in memory
+  -> store compact index in memory or worker storage
 ```
 
 When a report comes in, rank candidate files using:
@@ -90,6 +139,8 @@ When a report comes in, rank candidate files using:
 6. Semantic summaries of files/functions.
 
 Then send only the top 3-5 files to the investigation worker.
+
+Do not rely only on `gbrain code_def`. Local validation showed `code_refs` was useful, while `code_def` missed definitions in the demo JavaScript file.
 
 ## Fix Generation Flow
 
@@ -175,7 +226,7 @@ API and worker
   -> Railway or Render
 
 Memory
-  -> native GBrain with Supabase/PGLite if stable
+  -> native GBrain with Supabase/Postgres if stable
   -> GitHub markdown fallback if time constrained
 
 Code and PRs
@@ -183,6 +234,14 @@ Code and PRs
 ```
 
 Railway is preferred for the API/worker because the worker may need a long-running process, repo clone, and background job execution.
+
+Hosted GBrain should run as a separate service:
+
+```text
+gbrain serve --http --bind 0.0.0.0 --port $PORT --public-url <hosted-url>
+```
+
+Use Supabase/Postgres for hosted GBrain. Use PGLite only for local development.
 
 ## Phase Plan
 
@@ -208,6 +267,7 @@ Build:
 - Store every report as a structured memory page.
 - Query prior bug reports for similar context.
 - Show memory entry during demo.
+- Store final diagnosis and PR outcome back into memory.
 
 Gate:
 
@@ -219,8 +279,10 @@ Submit report -> memory entry appears -> related prior memory can be retrieved.
 
 Build:
 
-- Code index / candidate file selection.
-- Investigation prompt using current report, prior memory, and top code files.
+- GBrain memory retrieval using `search` / `query`.
+- GBrain code retrieval using `code_refs` where possible.
+- Worker fallback code index / candidate file selection.
+- Investigation prompt using current report, prior memory, code refs, and top code files.
 - Structured diagnosis output.
 
 Gate:
@@ -267,6 +329,9 @@ Report submitted -> PR opens with a reasonable, scoped fix.
 - Can hosted GStack be invoked safely, or should GStack be framed as the workflow used to build/review/ship?
 - Which hosting path is fastest today: Railway, Render, or Fly.io?
 - Should code access use a GitHub App or a personal token for the prototype?
+- Which embedding provider key will be used for hosted GBrain?
+- Will hosted GBrain run on Supabase Postgres or another Postgres provider?
+- Should the first hosted demo use native GBrain MCP or the CLI bridge from the worker?
 
 ## Collaboration Tasks
 
