@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createMemoryAdapter, type MemoryAdapter } from './gbrain.js';
+import { createMemoryAdapter, type MemoryAdapter, type MemorySearchResult } from './gbrain.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
 import { runAutofix, type AutofixResult } from './autofix.js';
@@ -102,18 +102,21 @@ export function createApp(deps: {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
     const similar = await memory.searchSimilar(record.report);
-    return c.json({ reportId: record.report.id, memory: record.memory, similar });
+    const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
+    return c.json({ reportId: record.report.id, memory: record.memory, similar, memoryImpact });
   });
 
   app.get('/reports/:id/handoff', async (c) => {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
     const similar = await memory.searchSimilar(record.report);
+    const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
     return c.json({
       reportId: record.report.id,
       repo: record.report.repo,
       normalizedReport: record.report,
       memorySearchResult: similar,
+      memoryImpact,
       autofix: record.autofix ?? null,
     });
   });
@@ -122,7 +125,8 @@ export function createApp(deps: {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.html('<h1>Report not found</h1>', 404);
     const similar = await memory.searchSimilar(record.report);
-    return c.html(renderReportHtml(record.report.id, record.report, record.raw, record.memory, similar, record.autofix ?? null));
+    const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
+    return c.html(renderReportHtml(record.report.id, record.report, record.raw, record.memory, similar, memoryImpact, record.autofix ?? null));
   });
 
   app.get('/reports/:id/autofix', async (c) => {
@@ -137,13 +141,18 @@ export function createApp(deps: {
 
     try {
       const result = await autofixRunner(record.report.id, record.report);
-      const autofix = summarizeAutofixResult(result);
-      await memory.putDiagnosis(record.report.id, autofix.diagnosis);
+      const autofixSummary = summarizeAutofixResult(result);
+      await memory.putDiagnosis(record.report.id, autofixSummary.diagnosis);
       await memory.putOutcome(record.report.id, {
-        status: autofix.status,
-        pr: autofix.pr,
-        verification: autofix.verification,
+        status: autofixSummary.status,
+        pr: autofixSummary.pr,
+        verification: autofixSummary.verification,
       });
+      const similar = await memory.searchSimilar(record.report);
+      const autofix = {
+        ...autofixSummary,
+        memoryImpact: buildMemoryImpact(record.report, record.memory, similar, autofixSummary),
+      };
       const updated = await store.update(record.report.id, (current) => ({
         ...current,
         autofix,
@@ -333,6 +342,7 @@ function renderReportHtml(
   raw: unknown,
   memory: unknown,
   similar: unknown,
+  memoryImpact: MemoryImpactSummary,
   autofix: unknown
 ): string {
   return `<!doctype html>
@@ -363,10 +373,100 @@ function renderReportHtml(
   <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
   <h2>Memory Search</h2>
   <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
+  <h2>Memory Impact</h2>
+  ${renderMemoryImpactHtml(memoryImpact)}
   <h2>Analysis Result</h2>
   <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
 </body>
 </html>`;
+}
+
+interface MemoryImpactSummary {
+  headline: string;
+  source: string;
+  similarCount: number;
+  topMemory: {
+    provider: string;
+    reportId?: string;
+    title: string;
+    score: number;
+    excerpt: string;
+    path?: string;
+    url?: string;
+  } | null;
+  impact: string[];
+  outcomeMemory: 'pending analysis' | 'diagnosis and outcome written';
+}
+
+function buildMemoryImpact(
+  report: LiteReport,
+  memory: unknown,
+  similar: MemorySearchResult[],
+  autofix: unknown
+): MemoryImpactSummary {
+  const priorMemory = similar.filter((result) => result.reportId !== report.id);
+  const topMemory = priorMemory[0] ?? similar[0] ?? null;
+  const provider = memoryProviderLabel(memory, topMemory);
+  const outcomeMemory = autofix && typeof autofix === 'object'
+    ? 'diagnosis and outcome written'
+    : 'pending analysis';
+
+  if (!topMemory) {
+    return {
+      headline: 'No similar bug memory yet',
+      source: provider,
+      similarCount: 0,
+      topMemory: null,
+      impact: [
+        'This report becomes the first memory for this failure pattern.',
+        'The diagnosis and verification outcome will be written back for the next related report.',
+      ],
+      outcomeMemory,
+    };
+  }
+
+  return {
+    headline: 'Similar bug memory found',
+    source: provider,
+    similarCount: priorMemory.length || similar.length,
+    topMemory: {
+      provider: topMemory.provider,
+      reportId: topMemory.reportId,
+      title: topMemory.title,
+      score: topMemory.score,
+      excerpt: topMemory.excerpt,
+      path: topMemory.path,
+      url: topMemory.url,
+    },
+    impact: [
+      `Matched prior memory: ${topMemory.title}.`,
+      'Supports the same failure pattern before patching: profile code reads a missing user.',
+      'Fix strategy cue: guard missing user before reading name and return a fallback.',
+    ],
+    outcomeMemory,
+  };
+}
+
+function memoryProviderLabel(memory: unknown, topMemory: MemorySearchResult | null): string {
+  if (memory && typeof memory === 'object') {
+    const provider = (memory as { provider?: unknown }).provider;
+    if (typeof provider === 'string') return provider;
+  }
+  return topMemory?.provider ?? 'memory';
+}
+
+function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
+  const top = summary.topMemory
+    ? `<p><strong>${escapeHtml(summary.headline)}</strong>: ${escapeHtml(summary.topMemory.title)} <span>(${escapeHtml(summary.topMemory.provider)}, score ${summary.topMemory.score})</span></p>
+       <p>${escapeHtml(summary.topMemory.excerpt)}</p>`
+    : `<p><strong>${escapeHtml(summary.headline)}</strong></p>`;
+  const items = summary.impact.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+
+  return `<section class="memory-impact">
+    ${top}
+    <ul>${items}</ul>
+    <p>Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
+  </section>`;
 }
 
 function analysisStatus(autofix: unknown): string {

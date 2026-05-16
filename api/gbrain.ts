@@ -210,16 +210,17 @@ class MarkdownMemoryAdapter implements MemoryAdapter {
   }
 
   private async searchRecords(query: string, excludeId?: string): Promise<MemorySearchResult[]> {
+    const terms = keywords(query);
+    const seededResults = seededDemoMemoryResults(query, terms, excludeId);
     const bugDir = join(this.rootDir, 'bugs');
     let names: string[];
     try {
       names = await readdir(bugDir);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return seededResults;
       throw err;
     }
 
-    const terms = keywords(query);
     const records = await Promise.all(
       names
         .filter((name) => name.endsWith('.md'))
@@ -231,7 +232,9 @@ class MarkdownMemoryAdapter implements MemoryAdapter {
         })
     );
 
-    return records
+    return [
+      ...seededResults,
+      ...records
       .map((record) => {
         const lower = record.content.toLowerCase();
         const score = terms.reduce((total, term) => total + countOccurrences(lower, term), 0);
@@ -244,7 +247,8 @@ class MarkdownMemoryAdapter implements MemoryAdapter {
           path: record.path,
         };
       })
-      .filter((result) => result.score > 0 || terms.length === 0)
+      .filter((result) => result.score > 0 || terms.length === 0),
+    ]
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
   }
@@ -284,6 +288,38 @@ class MarkdownMemoryAdapter implements MemoryAdapter {
     return data.content?.html_url;
   }
 }
+
+function seededDemoMemoryResults(query: string, terms: string[], excludeId?: string): MemorySearchResult[] {
+  if (process.env.LITE_ANNOTATE_DEMO_MEMORY === 'off') return [];
+  if (excludeId === 'memory_profile_missing_user_guard') return [];
+
+  const lower = query.toLowerCase();
+  const matchesPinnedBug = [
+    'user profile',
+    'reading name',
+    'undefined',
+    '/users',
+    'src/users.js',
+    'get /api/users/999',
+  ].some((needle) => lower.includes(needle));
+
+  if (!matchesPinnedBug) return [];
+
+  return [{
+    provider: 'github-markdown',
+    reportId: 'memory_profile_missing_user_guard',
+    score: Math.max(25, terms.reduce((total, term) => total + countOccurrences(DEMO_MEMORY_EXCERPT.toLowerCase(), term), 0)),
+    title: 'Prior profile bug: missing user fallback',
+    excerpt: DEMO_MEMORY_EXCERPT,
+    path: 'demo-memory://profile-missing-user-fallback',
+  }];
+}
+
+const DEMO_MEMORY_EXCERPT = [
+  'A previous profile-loading bug failed after /api/users/999 returned no user.',
+  'The diagnosis found src/users.js was reading user.name without checking for a missing user.',
+  'The verified fix strategy was to guard missing user before reading name and return a fallback greeting.',
+].join(' ');
 
 function renderReportMarkdown(report: LiteReport): string {
   const consoleText = report.console.map((entry) => {

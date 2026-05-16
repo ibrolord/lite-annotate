@@ -58,6 +58,10 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     assert.equal(handoffBody.normalizedReport.id, postBody.reportId);
     assert.ok(Array.isArray(handoffBody.memorySearchResult));
     assert.ok(handoffBody.memorySearchResult.some((result: { reportId?: string }) => result.reportId === postBody.reportId));
+    assert.equal(handoffBody.memoryImpact.headline, 'Similar bug memory found');
+    assert.equal(handoffBody.memoryImpact.similarCount >= 1, true);
+    assert.match(handoffBody.memoryImpact.topMemory.title, /missing user fallback/i);
+    assert.ok(handoffBody.memoryImpact.impact.some((line: string) => /guard missing user/i.test(line)));
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
@@ -122,6 +126,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(autofixBody.autofix.candidates[0].path, 'src/users.js');
     assert.equal(autofixBody.autofix.diagnosis.targetFiles[0], 'src/users.js');
     assert.equal(autofixBody.autofix.verification.ok, true);
+    assert.equal(autofixBody.autofix.memoryImpact.outcomeMemory, 'diagnosis and outcome written');
 
     const get = await app.request(`/reports/${postBody.reportId}/autofix`);
     assert.equal(get.status, 200);
@@ -137,6 +142,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /Analysis Result/);
     assert.match(viewAfterHtml, /verified_no_pr/);
     assert.match(viewAfterHtml, /src\/users\.js/);
+    assert.match(viewAfterHtml, /Memory Impact/);
+    assert.match(viewAfterHtml, /Similar bug memory found/);
+    assert.match(viewAfterHtml, /guard missing user/i);
 
     const record = await store.get(postBody.reportId);
     assert.equal(record?.autofix?.status, 'verified_no_pr');
