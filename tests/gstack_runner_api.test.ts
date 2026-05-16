@@ -89,6 +89,15 @@ test('GStack review endpoint creates remote job and callback stores result', asy
     assert.equal((runnerRequests[0].body as { report: { id: string; annotation: { target: string } } }).report.id, posted.reportId);
     assert.equal((runnerRequests[0].body as { report: { annotation: { target: string } } }).report.annotation.target, fixture.annotation.target);
 
+    const browserClick = await app.request(`/reports/${posted.reportId}/gstack/investigate`, {
+      method: 'POST',
+      headers: { Accept: 'text/html' },
+    });
+    assert.equal(browserClick.status, 303);
+    assert.equal(browserClick.headers.get('location'), `/reports/${posted.reportId}/view#gstack-review`);
+    assert.equal(runnerRequests.length, 2);
+    assert.equal((runnerRequests[1].body as { mode: string }).mode, 'investigate');
+
     const callback = await app.request('/internal/gstack-callback', {
       method: 'POST',
       headers: {
