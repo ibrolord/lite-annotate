@@ -7,6 +7,10 @@ import { test } from 'node:test';
 
 import { runAutofix } from '../../api/autofix.ts';
 
+function git(cwd: string, args: string[]): void {
+  execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
+
 function makeRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'lite-annotate-autofix-'));
   mkdirSync(join(root, 'src'), { recursive: true });
@@ -71,6 +75,15 @@ export function formatLoyaltyGreeting(customerId) {
       },
     })
   );
+  return root;
+}
+
+function initGitRepo(root: string): string {
+  git(root, ['init', '-b', 'main']);
+  git(root, ['config', 'user.email', 'lite-annotate@example.test']);
+  git(root, ['config', 'user.name', 'Lite Annotate Test']);
+  git(root, ['add', '.']);
+  git(root, ['commit', '-m', 'initial fixture']);
   return root;
 }
 
@@ -206,5 +219,55 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
     assert.ok(result.pipeline.verification?.commands.some((command) => command.stdout.includes('Customer not found')));
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix uses the report repo before hosted env repo defaults', async () => {
+  const wrongRepo = initGitRepo(makeRepo());
+  const commerceRepo = initGitRepo(makeCommerceRepo());
+  const workspaceRoot = mkdtempSync(join(tmpdir(), 'lite-annotate-report-repo-workspace-'));
+  const oldRepoPath = process.env.REPO_PATH;
+  const oldTargetRepo = process.env.TARGET_REPO;
+  const oldGithubRepo = process.env.GITHUB_REPO;
+
+  process.env.REPO_PATH = wrongRepo;
+  process.env.TARGET_REPO = wrongRepo;
+  process.env.GITHUB_REPO = wrongRepo;
+
+  try {
+    const result = await runAutofix('bug_cedar_report_repo', {
+      repo: commerceRepo,
+      title: 'Account loyalty profile crashes',
+      description: 'Clicked Load loyalty profile on /account.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/account',
+      route: '/account',
+      console: [
+        {
+          level: 'error',
+          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name') at formatLoyaltyGreeting (src/customer.js:16:36)",
+        },
+      ],
+      network: [{ method: 'GET', url: '/api/customers/vip-404', status: 404, failed: true }],
+      session: [{ type: 'click', target: 'button:Load loyalty profile' }],
+    }, {
+      workspaceRoot,
+      githubToken: undefined,
+      githubRepo: undefined,
+      runPackageScripts: false,
+    });
+
+    assert.equal(result.pipeline.candidates[0]?.path, 'src/customer.js');
+    assert.equal(result.pipeline.diagnosis.targetFiles[0], 'src/customer.js');
+    assert.notEqual(result.pipeline.candidates[0]?.path, 'src/users.js');
+  } finally {
+    if (oldRepoPath === undefined) delete process.env.REPO_PATH;
+    else process.env.REPO_PATH = oldRepoPath;
+    if (oldTargetRepo === undefined) delete process.env.TARGET_REPO;
+    else process.env.TARGET_REPO = oldTargetRepo;
+    if (oldGithubRepo === undefined) delete process.env.GITHUB_REPO;
+    else process.env.GITHUB_REPO = oldGithubRepo;
+    rmSync(wrongRepo, { recursive: true, force: true });
+    rmSync(commerceRepo, { recursive: true, force: true });
+    rmSync(workspaceRoot, { recursive: true, force: true });
   }
 });

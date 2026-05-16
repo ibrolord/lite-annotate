@@ -69,6 +69,7 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `gstack-runner-2026-05-16` | GStack Runner / Safety | Added protected remote GStack runner integration | Ready for deploy setup | `npm run typecheck`; `npm test` 37/37; runner health smoke on `localhost:3025`; trigger requires `GSTACK_TRIGGER_TOKEN`; non-PR runner jobs strip write GitHub credentials; callbacks strip raw logs; report updates serialize per report |
 | `gstack-runner-stdio-2026-05-16` | GStack Runner / Safety | Ignored runner child stdin explicitly | Done | Uses Node `stdio` option so spawned Claude/Git processes cannot hang on inherited stdin |
 | `gstack-trigger-token-2026-05-16` | GStack Runner / Safety | Made missing trigger token fail closed | Done | `npm test` 39/39; unauthenticated GStack trigger must return 503 when `GSTACK_TRIGGER_TOKEN` is absent |
+| `report-repo-callback-retry-2026-05-16` | Person B / GStack Runner | Preferred report repo and retried runner callbacks | Done | Autofix uses report-scoped repo over hosted env defaults; runner persists failed results and retries Lite Annotate callbacks before marking callback failure |
 
 ## Gates
 

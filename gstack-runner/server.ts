@@ -52,17 +52,17 @@ app.post('/jobs', async (c) => {
     const failed = await loadJob(jobId) ?? job;
     failed.status = 'failed';
     failed.error = redactSecrets(errorMessage(err));
-    failed.updatedAt = new Date().toISOString();
-    await saveJob(failed);
-    const summary = `GStack runner failed: ${redactSecrets(errorMessage(err))}`;
-    await callbackResult(failed, {
+    failed.result = {
       jobId,
       reportId: job.reportId,
       status: 'failed',
       commandsRun: [],
-      summary,
+      summary: `GStack runner failed: ${failed.error}`,
       completedAt: new Date().toISOString(),
-    });
+    };
+    failed.updatedAt = new Date().toISOString();
+    await saveJob(failed);
+    await callbackResultWithRetry(failed, failed.result);
   });
 
   return c.json({ jobId, status: 'queued' }, 202);
@@ -101,7 +101,7 @@ async function processJob(job: RunnerJob): Promise<void> {
   job.result = parsed;
   job.updatedAt = new Date().toISOString();
   await saveJob(job);
-  await callbackResult(job, parsed);
+  await callbackResultWithRetry(job, parsed);
 
   if (process.env.GSTACK_KEEP_WORKDIR !== '1') {
     await rm(job.workDir, { recursive: true, force: true });
@@ -207,6 +207,26 @@ async function callbackResult(job: RunnerJob, result: GStackReviewResult): Promi
   if (!response.ok) {
     throw new Error(`Lite Annotate callback failed: ${response.status} ${await response.text()}`);
   }
+}
+
+async function callbackResultWithRetry(job: RunnerJob, result: GStackReviewResult): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await callbackResult(job, result);
+      return;
+    } catch (err) {
+      lastError = err;
+      await delay(attempt * 2000);
+    }
+  }
+  job.error = `Lite Annotate callback failed after retries: ${redactSecrets(errorMessage(lastError))}`;
+  job.updatedAt = new Date().toISOString();
+  await saveJob(job);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function saveJob(job: RunnerJob): Promise<void> {

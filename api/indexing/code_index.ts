@@ -45,6 +45,7 @@ export interface CodeIndex {
 }
 
 export interface ReportLike {
+  repo?: string;
   title?: string;
   description?: string;
   repo?: string;

@@ -90,13 +90,17 @@ function reportRepo(report: PersonBPipelineInput['report']): string | undefined 
 export async function runAutofix(
   bugId: string,
   report: PersonBPipelineInput['report'],
-  options: AutofixOptions = envOptions()
+  options: AutofixOptions = {}
 ): Promise<AutofixResult> {
-  const resolvedOptions = { ...envOptions(), ...options };
   const embeddedRepo = reportRepo(report);
-  if (!resolvedOptions.workspacePath && !resolvedOptions.repo && embeddedRepo) {
-    resolvedOptions.repo = embeddedRepo;
-  }
+  const env = envOptions();
+  const resolvedOptions = {
+    ...env,
+    ...options,
+    workspacePath: options.workspacePath ?? (embeddedRepo ? undefined : env.workspacePath),
+    repo: options.repo ?? embeddedRepo ?? env.repo,
+    githubRepo: options.githubRepo ?? embeddedRepo ?? env.githubRepo,
+  };
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
   const pipeline = await runPersonBPipeline({
