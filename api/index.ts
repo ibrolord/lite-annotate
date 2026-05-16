@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMemoryAdapter, type MemoryAdapter } from './gbrain.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
-import { ReportStore } from './report_store.js';
+import { ReportStore, type StoredReportRecord } from './report_store.js';
 import { runAutofix, type AutofixResult } from './autofix.js';
 import type { LiteReport } from './report_contract.js';
 
@@ -80,6 +80,10 @@ export function createApp(deps: {
 
   app.get('/reports', async (c) => {
     return c.json({ reports: await store.list() });
+  });
+
+  app.get('/reports/dashboard', async (c) => {
+    return c.html(renderReportsDashboard(await store.listRecords()));
   });
 
   app.get('/reports/:id', async (c) => {
@@ -181,6 +185,147 @@ export function createApp(deps: {
 }
 
 export const app = createApp();
+
+function renderReportsDashboard(records: StoredReportRecord[]): string {
+  const rows = records.map((record) => renderReportRow(record)).join('');
+  const empty = records.length === 0
+    ? '<tr><td colspan="8" class="empty">No reports captured yet. Submit one from <a href="/demo">the demo</a>.</td></tr>'
+    : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lite Annotate Reports</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; color: #111827; background: #f8fafc; }
+    main { max-width: 1240px; margin: 0 auto; padding: 32px 20px 64px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+    h1 { font-size: 24px; margin: 0 0 6px; }
+    p { margin: 0; color: #4b5563; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .button { display: inline-flex; align-items: center; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; background: #fff; color: #111827; font-size: 14px; }
+    .table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; min-width: 980px; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; font-size: 13px; }
+    th { color: #6b7280; font-weight: 600; background: #f9fafb; }
+    tr:last-child td { border-bottom: 0; }
+    .title { font-weight: 600; color: #111827; }
+    .muted { color: #6b7280; }
+    .pill { display: inline-flex; border-radius: 999px; padding: 2px 8px; font-size: 12px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; white-space: nowrap; }
+    .pill.warn { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .links { display: flex; gap: 8px; flex-wrap: wrap; }
+    .empty { text-align: center; padding: 32px; color: #6b7280; }
+    code { background: #f3f4f6; border-radius: 4px; padding: 1px 4px; }
+    @media (max-width: 760px) {
+      header { display: block; }
+      .actions { margin-top: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Reports</h1>
+        <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for review and Person B handoff.</p>
+      </div>
+      <nav class="actions">
+        <a class="button" href="/demo">Demo</a>
+        <a class="button" href="/reports">JSON</a>
+      </nav>
+    </header>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Created</th>
+            <th>Report</th>
+            <th>Route</th>
+            <th>Annotation</th>
+            <th>Context</th>
+            <th>Memory</th>
+            <th>Worker</th>
+            <th>Links</th>
+          </tr>
+        </thead>
+        <tbody>${rows}${empty}</tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
+function renderReportRow(record: StoredReportRecord): string {
+  const report = record.report;
+  const memory = memorySummary(record.memory);
+  const context = [
+    `${report.console.length} console`,
+    `${report.network.length} network`,
+    `${report.session.length} session`,
+    report.screenshot.type === 'data-url-or-url' ? 'screenshot' : `no screenshot: ${report.screenshot.reason || 'unknown'}`,
+  ].join(' · ');
+
+  return `<tr>
+    <td><span title="${escapeHtml(report.createdAt)}">${escapeHtml(formatDate(report.createdAt))}</span></td>
+    <td>
+      <div class="title">${escapeHtml(report.title)}</div>
+      <div class="muted"><code>${escapeHtml(report.id)}</code></div>
+      <div class="muted">${escapeHtml(report.repo)}</div>
+    </td>
+    <td>
+      <div>${escapeHtml(report.route)}</div>
+      <div class="muted">${escapeHtml(shortUrl(report.url))}</div>
+    </td>
+    <td>
+      <div>${escapeHtml(report.annotation.target || 'No target pinned')}</div>
+      <div class="muted">${escapeHtml(report.annotation.selector || 'No selector')}</div>
+    </td>
+    <td>${escapeHtml(context)}</td>
+    <td><span class="${memory.ok ? 'pill' : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
+    <td><span class="pill">handoff ready</span></td>
+    <td>
+      <div class="links">
+        <a href="/reports/${encodeURIComponent(report.id)}/view">view</a>
+        <a href="/reports/${encodeURIComponent(report.id)}">json</a>
+        <a href="/reports/${encodeURIComponent(report.id)}/memory">memory</a>
+        <a href="/reports/${encodeURIComponent(report.id)}/handoff">handoff</a>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function memorySummary(memory: unknown): { ok: boolean; label: string } {
+  if (!memory || typeof memory !== 'object') return { ok: false, label: 'not written' };
+  const record = memory as { provider?: unknown; status?: unknown };
+  const provider = typeof record.provider === 'string' ? record.provider : 'memory';
+  const status = typeof record.status === 'string' ? record.status : 'written';
+  return { ok: true, label: `${provider}: ${status}` };
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function shortUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return value;
+  }
+}
 
 function renderReportHtml(
   reportId: string,

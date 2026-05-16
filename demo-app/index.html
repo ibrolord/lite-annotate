@@ -20,6 +20,24 @@
     h1 { font-size: 28px; margin: 0 0 8px; }
     h2 { font-size: 16px; margin: 0 0 12px; }
     p { color: #4b5563; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .topbar a {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+      color: #111827;
+      font-size: 14px;
+      text-decoration: none;
+    }
+    .topbar a:hover { background: #f3f4f6; }
     button {
       padding: 10px 18px;
       background: #111827;
@@ -79,13 +97,20 @@
     @media (max-width: 860px) {
       .grid { grid-template-columns: 1fr; }
       main { padding-inline: 16px; }
+      .topbar { display: block; }
+      .topbar a { margin-top: 12px; }
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>Lite Annotate Demo</h1>
-    <p>Trigger the pinned profile bug, then submit it with the widget in the lower-right corner.</p>
+    <header class="topbar">
+      <div>
+        <h1>Lite Annotate Demo</h1>
+        <p>Trigger the pinned profile bug, then submit it with the widget in the lower-right corner.</p>
+      </div>
+      <a href="/reports/dashboard">Reports dashboard</a>
+    </header>
 
     <div class="grid">
       <section class="panel">

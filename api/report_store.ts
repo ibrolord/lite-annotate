@@ -41,6 +41,11 @@ export class ReportStore {
   }
 
   async list(): Promise<LiteReport[]> {
+    const records = await this.listRecords();
+    return records.map((record) => record.report);
+  }
+
+  async listRecords(): Promise<StoredReportRecord[]> {
     try {
       const names = await readdir(this.rootDir);
       const records = await Promise.all(
@@ -49,8 +54,7 @@ export class ReportStore {
           .map((name) => readFile(join(this.rootDir, name), 'utf8').then((content) => JSON.parse(content) as StoredReportRecord))
       );
       return records
-        .map((record) => record.report)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        .sort((a, b) => b.report.createdAt.localeCompare(a.report.createdAt));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw err;
