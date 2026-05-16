@@ -49,17 +49,9 @@ app.post('/jobs', async (c) => {
 
   void processJob(job).catch(async (err) => {
     const failed = await loadJob(jobId) ?? job;
-    failed.status = 'failed';
     failed.error = redactSecrets(errorMessage(err));
-    failed.result = {
-      jobId,
-      reportId: job.reportId,
-      status: 'failed',
-      mode: failed.mode,
-      commandsRun: [],
-      summary: `GStack runner failed: ${failed.error}`,
-      completedAt: new Date().toISOString(),
-    };
+    failed.result = buildRunnerFailureResult(failed, failed.error);
+    failed.status = failed.result.status;
     failed.updatedAt = new Date().toISOString();
     await saveJob(failed);
     await callbackResultWithRetry(failed, failed.result);
@@ -130,13 +122,13 @@ function publicRepoUrl(repo: string): string {
   return `https://github.com/${trimmed}.git`;
 }
 
-function buildClaudePrompt(request: GStackReviewRequest): string {
+export function buildClaudePrompt(request: GStackReviewRequest): string {
   const workflowInstruction = request.mode === 'investigate'
     ? 'Use /investigate. Do not patch, commit, push, or open a PR. Return the root cause, evidence, confidence, and next action.'
     : request.mode === 'ship'
       ? 'Use /investigate first, then /ship only if verification passes and allowPr is true.'
-      : request.mode === 'qa'
-        ? 'Use /investigate first, then run /qa. Treat this as a real QA workflow, not investigation-only. Use the report URL, route, annotation, console, network breadcrumbs, and cloned repo to reproduce or validate the issue. If allowPr is false, run /qa in report-only mode: do not edit files, commit, push, or open a PR. If allowPr is true, /qa may make scoped fixes, run verification, commit, and open a PR when the issue is confirmed. If /qa cannot run because required app setup or credentials are missing, return status "blocked" and explain the missing prerequisite instead of silently skipping /qa.'
+    : request.mode === 'qa'
+        ? 'Use /investigate first, then run /qa exactly once. Treat this as a real QA workflow, not investigation-only. Keep the QA pass bounded: one reproduction attempt, one likely code inspection path, and one verification path when possible. Do not run /ship. Do not keep iterating after /qa; return the RESULT_JSON immediately. If allowPr is false, run /qa in report-only mode: do not edit files, commit, push, or open a PR. If allowPr is true, /qa may make one scoped fix and open a PR only when the issue is confirmed and verification completes inside this run; otherwise return status "failed" or "blocked" with the missing prerequisite. If /qa cannot run because required app setup or credentials are missing, return status "blocked" and explain the missing prerequisite instead of silently skipping /qa.'
         : 'Use /investigate first, then /review to validate the proposed fix or patch context.';
   const expectedCommands = request.mode === 'qa' ? '["/investigate", "/qa"]' : '["/investigate"]';
 
@@ -156,7 +148,8 @@ Installed GStack workflow skills available when applicable:
 
 Rules:
 - Do not invent GStack evidence. Only list commands or skills you actually used.
-- For requested workflow "qa", the expected workflow is /investigate followed by /qa. Do not return an investigation-only result unless /qa is blocked, and mark blocked with the missing prerequisite if so.
+- For requested workflow "qa", the expected workflow is /investigate followed by one /qa pass. Do not return an investigation-only result unless /qa is blocked, and mark blocked with the missing prerequisite if so.
+- For requested workflow "qa", do not continue into /ship or an open-ended fix loop. Stop and return the RESULT_JSON after /qa reports pass/fail/blocked.
 - Do not push or open a PR unless allowPr is true and verification passes.
 - Keep changes scoped to the target repo and the report's likely files.
 - Return a single JSON object between RESULT_JSON_START and RESULT_JSON_END.
@@ -188,7 +181,38 @@ Expected JSON shape:
   "tests": [{"command":"npm test","status":"passed|failed|skipped","output":"short output"}],
   "prUrl": "optional",
   "commitSha": "optional"
-}`;
+  }`;
+}
+
+function buildRunnerFailureResult(job: RunnerJob, error: string): GStackReviewResult {
+  const hitTurnLimit = /Reached max turns/i.test(error);
+  if (job.mode === 'qa' && hitTurnLimit) {
+    return {
+      jobId: job.jobId,
+      reportId: job.reportId,
+      status: 'blocked',
+      mode: job.mode,
+      commandsRun: [],
+      headline: 'GStack QA hit the runner turn limit before returning a result.',
+      summary: 'The QA workflow started but exhausted its Claude turn budget before it could return a structured pass/fail result.',
+      rootCause: 'The runner spent too many turns in the QA workflow before producing RESULT_JSON.',
+      confidence: 'high',
+      evidence: [{ label: 'Runner', value: error, source: 'gstack-runner' }],
+      recommendedAction: { type: 'manual', label: 'Review runner logs or rerun QA with a narrower report' },
+      tests: [{ command: '/qa', status: 'skipped', output: 'Runner reached Claude max turns before returning a QA result.' }],
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    jobId: job.jobId,
+    reportId: job.reportId,
+    status: 'failed',
+    mode: job.mode,
+    commandsRun: [],
+    summary: `GStack runner failed: ${error}`,
+    completedAt: new Date().toISOString(),
+  };
 }
 
 function parseClaudeResult(job: RunnerJob, output: string): GStackReviewResult {

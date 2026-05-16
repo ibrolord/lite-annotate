@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { createApp } from '../api/index.js';
 import { createMemoryAdapter } from '../api/gbrain.js';
 import { ReportStore } from '../api/report_store.js';
-import { app as runnerApp, buildCloneUrl, buildRunnerCommandEnv } from '../gstack-runner/server.js';
+import { app as runnerApp, buildClaudePrompt, buildCloneUrl, buildRunnerCommandEnv } from '../gstack-runner/server.js';
 
 test('GStack review endpoint creates remote job and callback stores result', async () => {
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
@@ -671,6 +671,41 @@ test('GStack runner strips write credentials from non-PR jobs', () => {
   } finally {
     restoreEnv(oldEnv);
   }
+});
+
+test('GStack QA prompt is bounded to one QA pass and no ship loop', () => {
+  const prompt = buildClaudePrompt({
+    reportId: 'bug_123',
+    repo: 'ibrolord/lite-annotate-demo',
+    mode: 'qa',
+    allowPr: true,
+    report: {
+      id: 'bug_123',
+      projectId: 'demo',
+      repo: 'ibrolord/lite-annotate-demo',
+      title: 'Logout keeps profile panel visible',
+      description: 'Profile panel is still visible after logout',
+      url: 'https://example.com/account',
+      route: '/account',
+      userAgent: 'node-test',
+      viewport: { width: 1280, height: 720 },
+      annotation: {
+        title: 'Logout keeps profile panel visible',
+        description: 'Profile panel is still visible after logout',
+      },
+      console: [],
+      network: [],
+      session: [],
+      screenshot: { type: 'failure', reason: 'not captured in unit test' },
+      createdAt: '2026-05-16T00:00:00.000Z',
+    },
+    callbackUrl: 'https://lite-annotate.example.com/internal/gstack-callback',
+  });
+
+  assert.match(prompt, /run \/qa exactly once/i);
+  assert.match(prompt, /Do not run \/ship/i);
+  assert.match(prompt, /Stop and return the RESULT_JSON after \/qa/i);
+  assert.match(prompt, /"commandsRun": \["\/investigate", "\/qa"\]/);
 });
 
 test('GStack runner rejects invalid job JSON', async () => {
