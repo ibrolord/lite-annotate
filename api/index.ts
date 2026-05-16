@@ -20,6 +20,7 @@ import type { AutofixStageEvent, AutofixStageReporter } from './worker/person_b_
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
+const CUSTOMER_DEMO_URL = 'https://lite-annotate-commerce-demo.vercel.app';
 
 interface AutofixRunnerContext {
   dryRun: boolean;
@@ -601,7 +602,7 @@ export const app = createApp();
 function renderReportsDashboard(records: StoredReportRecord[]): string {
   const rows = records.map((record) => renderReportRow(record)).join('');
   const empty = records.length === 0
-    ? '<tr><td colspan="9" class="empty">No reports captured yet. Submit one from <a href="/demo">the demo</a>.</td></tr>'
+    ? `<tr><td colspan="9" class="empty">No reports captured yet. Submit one from <a href="${CUSTOMER_DEMO_URL}">the demo</a>.</td></tr>`
     : '';
   const readyCount = records.filter((record) => record.memory).length;
   const analyzedCount = records.filter((record) => record.autofix).length;
@@ -667,7 +668,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
         <p>${records.length} saved ${records.length === 1 ? 'report' : 'reports'} ready for memory-aware engineering review.</p>
       </div>
       <nav class="actions">
-        <a class="button" href="/demo">Demo</a>
+        <a class="button" href="${CUSTOMER_DEMO_URL}">Demo</a>
         <a class="button" href="/reports">JSON</a>
       </nav>
     </header>
