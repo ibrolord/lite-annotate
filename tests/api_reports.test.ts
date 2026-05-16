@@ -135,9 +135,9 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const viewBefore = await app.request(`/reports/${postBody.reportId}/view`);
     assert.equal(viewBefore.status, 200);
     const viewBeforeHtml = await viewBefore.text();
-    assert.match(viewBeforeHtml, /Run Auto-Fix/);
+    assert.match(viewBeforeHtml, /Open PR with Auto-Fix/);
     assert.doesNotMatch(viewBeforeHtml, /Run analysis/);
-    assert.match(viewBeforeHtml, /Dry run analysis/);
+    assert.match(viewBeforeHtml, /Preview Auto-Fix/);
     assert.match(viewBeforeHtml, /Captured screen/);
     assert.match(viewBeforeHtml, /Interaction summary/);
     assert.match(viewBeforeHtml, /Evidence brief/);
@@ -146,7 +146,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /ibrolord\/lite-annotate-demo/);
     assert.match(viewBeforeHtml, /Safe validation/);
     assert.match(viewBeforeHtml, /PR-opening action/);
-    assert.match(viewBeforeHtml, /Raw payloads/);
+    assert.match(viewBeforeHtml, /Debug payloads/);
     assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/autofix`));
     assert.doesNotMatch(viewBeforeHtml, /Person B/);
     assert.match(viewBeforeHtml, /Cold Agent vs Memory Agent/);
@@ -179,7 +179,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(htmlAutofix.status, 303);
     assert.equal(
       htmlAutofix.headers.get('location'),
-      `/reports/${postBody.reportId}/view#analysis-result`
+      `/reports/${postBody.reportId}/view#autofix-result`
     );
     assert.deepEqual(dryRunCalls, [true, false]);
 
@@ -190,7 +190,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
 
     const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
     const viewAfterHtml = await viewAfter.text();
-    assert.match(viewAfterHtml, /Analysis Result/);
+    assert.match(viewAfterHtml, /Auto-Fix Result/);
+    assert.match(viewAfterHtml, /Verified patch ready/);
     assert.match(viewAfterHtml, /verified_no_pr/);
     assert.match(viewAfterHtml, /src\/users\.js/);
     assert.match(viewAfterHtml, new RegExp(`data-analysis-src="/reports/${postBody.reportId}/autofix"`));

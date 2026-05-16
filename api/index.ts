@@ -457,7 +457,7 @@ export function createApp(deps: {
         updatedAt: new Date().toISOString(),
       }));
       if (requestPrefersHtml(c.req.raw)) {
-        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#analysis-result`, 303);
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#autofix-result`, 303);
       }
       return c.json({ reportId: record.report.id, autofix: updated?.autofix ?? autofixWithDemoContext });
     } catch (err) {
@@ -472,7 +472,7 @@ export function createApp(deps: {
         updatedAt: new Date().toISOString(),
       }));
       if (requestPrefersHtml(c.req.raw)) {
-        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#analysis-result`, 303);
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#autofix-result`, 303);
       }
       return c.json({ reportId: record.report.id, autofix }, 500);
     }
@@ -799,10 +799,27 @@ function renderReportHtml(
     }
     .repo-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
     .repo-form button { border: 1px solid var(--line); background: var(--soft); color: var(--ink); }
+    .autofix-result { margin: 0 0 18px; }
+    .result-card { display: grid; gap: 14px; padding: 16px; }
+    .result-headline { display: grid; gap: 6px; }
+    .result-headline strong { color: var(--ink); font-size: 18px; line-height: 1.25; }
+    .result-headline p { max-width: 78ch; }
+    .result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .result-item { display: grid; gap: 5px; padding: 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+    .result-item:nth-child(2n) { border-right: 0; }
+    .result-item:nth-last-child(-n + 2) { border-bottom: 0; }
+    .result-item span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .result-item strong { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
     .analysis-body { padding: 14px 16px 16px; }
     .analysis-summary { display: grid; gap: 10px; padding: 14px 16px; }
     .analysis-summary dl { display: grid; gap: 8px; margin: 0; }
-    .analysis-summary div { display: grid; grid-template-columns: 88px 1fr; gap: 10px; align-items: baseline; }
+    .analysis-summary div { display: grid; grid-template-columns: 104px 1fr; gap: 10px; align-items: baseline; }
     .analysis-summary dt {
       color: var(--muted);
       font-size: 12px;
@@ -960,6 +977,11 @@ function renderReportHtml(
       .actions { justify-content: flex-start; margin-top: 14px; }
       .stage-layout,
       .layout { grid-template-columns: 1fr; }
+      .result-grid { grid-template-columns: 1fr; }
+      .result-item,
+      .result-item:nth-child(2n),
+      .result-item:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--line); }
+      .result-item:last-child { border-bottom: 0; }
       .inspector { position: static; }
       .comparison { grid-template-columns: 1fr; }
       .agent-column { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -985,10 +1007,10 @@ function renderReportHtml(
       </div>
       <div class="actions" aria-label="Analysis actions">
         <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
-          <button class="safe" type="submit">Dry run analysis</button>
+          <button class="safe" type="submit">Preview Auto-Fix</button>
         </form>
         <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
-          <button class="danger" type="submit">Run Auto-Fix</button>
+          <button class="danger" type="submit">Open PR with Auto-Fix</button>
         </form>
       </div>
     </header>
@@ -1010,6 +1032,13 @@ function renderReportHtml(
           <p>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} returned ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</p>
         </div>
       </section>
+    </section>
+    <section class="surface autofix-result" id="autofix-result">
+      <div class="surface-head">
+        <h2>Auto-Fix Result</h2>
+        <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
+      </div>
+      ${renderAnalysisResultHtml(reportId, autofix)}
     </section>
     <div class="layout">
       <aside class="inspector">
@@ -1036,7 +1065,7 @@ function renderReportHtml(
               <input id="target-repo" name="repo" value="${escapeHtml(report.repo)}" autocomplete="off" spellcheck="false" />
               <button type="submit">Save repo</button>
             </div>
-            <p>Dry run analysis and Run Auto-Fix use this repository for file ranking, patch verification, and PR creation.</p>
+            <p>Preview Auto-Fix and Open PR with Auto-Fix use this repository for file ranking, patch verification, and PR creation.</p>
           </form>
         </section>
         <section class="surface">
@@ -1044,16 +1073,9 @@ function renderReportHtml(
             <h2>Action safety</h2>
           </div>
           <div class="safety-list">
-            <div class="safety-row"><span>Safe validation</span><div><strong>Dry run analysis</strong><p>Verifies diagnosis and patch gates without opening a public PR.</p></div></div>
-            <div class="safety-row"><span>PR-opening action</span><div><strong>Run Auto-Fix</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
+            <div class="safety-row"><span>Safe validation</span><div><strong>Preview Auto-Fix</strong><p>Verifies diagnosis and patch gates without opening a public PR.</p></div></div>
+            <div class="safety-row"><span>PR-opening action</span><div><strong>Open PR with Auto-Fix</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
           </div>
-        </section>
-        <section class="surface" id="analysis-result">
-          <div class="surface-head">
-            <h2>Analysis Result</h2>
-            <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
-          </div>
-          ${renderAnalysisResultHtml(reportId, autofix)}
         </section>
         ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
       </aside>
@@ -1076,8 +1098,8 @@ function renderReportHtml(
           </div>
           ${renderMemoryReceiptsHtml(memoryReceipts)}
         </section>
-        <details open>
-          <summary>Raw payloads</summary>
+        <details>
+          <summary>Debug payloads</summary>
           <h3 class="raw-label">Normalized Report</h3>
           <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
           <h3 class="raw-label">Raw Saved Payload</h3>
@@ -1451,6 +1473,9 @@ function primaryConsoleMessage(report: LiteReport): string {
 function summarizeStoredAutofix(autofix: unknown): {
   candidateFiles: string[];
   targetFiles: string[];
+  patchSource?: string;
+  patchSummary?: string;
+  prUrl?: string;
   rootCause?: string;
   verificationOk: boolean | null;
   verificationCommands: string[];
@@ -1462,6 +1487,8 @@ function summarizeStoredAutofix(autofix: unknown): {
   const record = autofix as {
     candidates?: Array<{ path?: unknown }>;
     diagnosis?: { targetFiles?: unknown; rootCause?: unknown };
+    patch?: { source?: unknown; summary?: unknown };
+    pr?: { url?: unknown; pr_url?: unknown };
     verification?: { ok?: unknown; commands?: Array<{ name?: unknown }> };
   };
 
@@ -1476,29 +1503,30 @@ function summarizeStoredAutofix(autofix: unknown): {
     : [];
   const verificationOk = typeof record.verification?.ok === 'boolean' ? record.verification.ok : null;
   const rootCause = typeof record.diagnosis?.rootCause === 'string' ? record.diagnosis.rootCause : undefined;
+  const patchSource = typeof record.patch?.source === 'string' ? record.patch.source : undefined;
+  const patchSummary = typeof record.patch?.summary === 'string' ? record.patch.summary : undefined;
+  const prUrl = typeof record.pr?.url === 'string'
+    ? record.pr.url
+    : typeof record.pr?.pr_url === 'string' ? record.pr.pr_url : undefined;
 
-  return { candidateFiles, targetFiles, rootCause, verificationOk, verificationCommands };
+  return { candidateFiles, targetFiles, patchSource, patchSummary, prUrl, rootCause, verificationOk, verificationCommands };
 }
 
 function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/autofix">
-    <summary>Raw analysis JSON</summary>
-    <pre data-analysis-raw>Open to load analysis result.</pre>
+    <summary>Debug Auto-Fix JSON</summary>
+    <pre data-analysis-raw>Open to load Auto-Fix JSON.</pre>
   </details>`;
 
   if (!autofix || typeof autofix !== 'object') {
     return `<div class="analysis-body">
-      <p>No analysis has run yet. Use Dry run analysis to verify diagnosis and patch gates without opening a public PR.</p>
+      <p>No Auto-Fix run yet. Use Preview Auto-Fix to verify diagnosis and patch gates without opening a public PR.</p>
     </div>
     ${rawDetails}`;
   }
 
   const summary = summarizeStoredAutofix(autofix);
   const status = analysisStatus(autofix);
-  const pr = (autofix as { pr?: unknown }).pr;
-  const prUrl = pr && typeof pr === 'object' && typeof (pr as { url?: unknown }).url === 'string'
-    ? (pr as { url: string }).url
-    : '';
   const targetFiles = summary.targetFiles.length ? summary.targetFiles.join(', ') : 'No target files recorded';
   const candidateFiles = summary.candidateFiles.length ? summary.candidateFiles.join(', ') : 'No candidate files recorded';
   const verification = summary.verificationOk === null
@@ -1507,15 +1535,45 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   const commands = summary.verificationCommands.length
     ? summary.verificationCommands.join(', ')
     : 'No verification commands recorded';
+  const headline = summary.verificationOk === true
+    ? summary.prUrl ? 'Verified patch and opened a pull request' : 'Verified patch ready'
+    : summary.verificationOk === false ? 'Auto-Fix needs attention' : 'Auto-Fix recorded';
+  const subcopy = summary.verificationOk === true
+    ? summary.prUrl
+      ? 'Auto-Fix verified the patch and opened a GitHub PR.'
+      : 'Auto-Fix verified the patch locally. No public PR was opened.'
+    : summary.verificationOk === false
+      ? 'Auto-Fix found a patch path, but verification failed or did not pass cleanly.'
+      : `Auto-Fix recorded status: ${status}.`;
+  const patch = summary.patchSummary
+    ? `${summary.patchSummary}${summary.patchSource ? ` (${summary.patchSource})` : ''}`
+    : summary.patchSource ?? 'No patch summary recorded';
+  const prHtml = summary.prUrl
+    ? `<a href="${escapeHtml(summary.prUrl)}">Open GitHub PR</a>`
+    : 'No PR opened';
 
-  return `<div class="analysis-summary">
+  return `<div class="result-card">
+    <div class="result-headline">
+      <strong>${escapeHtml(headline)}</strong>
+      <p>${escapeHtml(subcopy)}</p>
+    </div>
+    <div class="result-grid">
+      <div class="result-item"><span>Status</span><strong>${escapeHtml(status)}</strong></div>
+      <div class="result-item"><span>Changed files</span><strong>${escapeHtml(targetFiles)}</strong></div>
+      <div class="result-item"><span>Patch</span><strong>${escapeHtml(patch)}</strong></div>
+      <div class="result-item"><span>Verification</span><strong>${escapeHtml(verification)} · ${escapeHtml(commands)}</strong></div>
+      <div class="result-item"><span>Pull request</span><strong>${prHtml}</strong></div>
+      <div class="result-item"><span>Why this file</span><strong>${escapeHtml(summary.rootCause ?? candidateFiles)}</strong></div>
+    </div>
+  </div>
+  <div class="analysis-summary">
     <dl>
       <div><dt>Status</dt><dd>${escapeHtml(status)}</dd></div>
       <div><dt>Root cause</dt><dd>${escapeHtml(summary.rootCause ?? 'No root cause recorded')}</dd></div>
       <div><dt>Targets</dt><dd>${escapeHtml(targetFiles)}</dd></div>
       <div><dt>Candidates</dt><dd>${escapeHtml(candidateFiles)}</dd></div>
       <div><dt>Verification</dt><dd>${escapeHtml(verification)} · ${escapeHtml(commands)}</dd></div>
-      <div><dt>PR</dt><dd>${prUrl ? `<a href="${escapeHtml(prUrl)}">${escapeHtml(prUrl)}</a>` : 'No PR opened'}</dd></div>
+      <div><dt>PR</dt><dd>${prHtml}</dd></div>
     </dl>
   </div>
   ${rawDetails}`;
