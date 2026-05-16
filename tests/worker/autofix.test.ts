@@ -408,7 +408,7 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
     assert.equal(result.pipeline.candidates[0]?.path, 'src/styles.css');
     assert.deepEqual(result.pipeline.diagnosis.targetFiles, ['src/styles.css']);
     assert.equal(result.pipeline.patch.ok, true);
-    assert.equal(result.pipeline.patch.source, 'llm');
+    assert.equal(result.pipeline.patch.source, 'deterministic');
     assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css']);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /\.checkout-form \.button-primary/);
     assert.match(result.pipeline.patch.files[0]?.content ?? '', /#2563eb/);

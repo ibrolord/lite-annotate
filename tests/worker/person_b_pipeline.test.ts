@@ -150,8 +150,73 @@ test('runPersonBPipeline lets the model choose repo files when local triage is n
     const result = await runPersonBPipeline({
       workspacePath: root,
       report: {
-        title: 'Checkout button should be blue',
-        description: 'The Place demo order button should use a blue background.',
+        title: 'Checkout page should mention pickup window',
+        description: 'The checkout page should mention that pickup is ready within two hours.',
+        url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
+        route: '/checkout',
+        annotation: {
+          target: 'section: Shipping details',
+          selector: '.checkout-form',
+        },
+        console: [{
+          level: 'error',
+          message: 'Non-blocking checkout quote warning',
+          stack: 'ReferenceError: quote warning\n    at quoteCheckoutButton (src/api/checkout/quote.js:1:1)',
+        }],
+      },
+      runPackageScripts: false,
+      smokeCommands: [
+        {
+          command: process.execPath,
+          args: [
+            '-e',
+            "const fs = require('fs'); const html = fs.readFileSync('index.html', 'utf8'); if (!html.includes('Pickup is ready within two hours')) process.exit(1);",
+          ],
+        },
+      ],
+      codePatchGenerator: async ({ diagnosis, index, allowRepoFileSelection }) => {
+        called = true;
+        assert.equal(allowRepoFileSelection, true);
+        assert.ok(index?.files.some((file) => file.path === 'src/api/checkout/quote.js'));
+        assert.ok(index?.files.some((file) => file.path === 'index.html'));
+        const html = index?.files.find((file) => file.path === 'index.html');
+        assert.ok(html);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-repo-selector',
+          summary: 'Added pickup timing copy to checkout.',
+          files: [
+            {
+              path: 'index.html',
+              content: html.content.replace('</section>', '<p>Pickup is ready within two hours.</p>\n</section>'),
+            },
+          ],
+        };
+      },
+    });
+
+    assert.equal(called, true);
+    assert.equal(result.patch.ok, true);
+    assert.equal(result.patch.source, 'llm');
+    assert.deepEqual(result.diagnosis.targetFiles, ['index.html']);
+    assert.equal(result.diagnosis.shouldPatch, true);
+    assert.equal(result.verification?.ok, true);
+    assert.deepEqual(result.verification?.modifiedFiles, ['index.html']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runPersonBPipeline uses fast deterministic CSS patch for noisy color reports before LLM fallback', async () => {
+  const root = makeRepo();
+  try {
+    let called = false;
+    const result = await runPersonBPipeline({
+      workspacePath: root,
+      report: {
+        title: 'Checkout button should be purple',
+        description: 'The Place demo order button should use a purple background.',
         url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
         route: '/checkout',
         annotation: {
@@ -170,38 +235,20 @@ test('runPersonBPipeline lets the model choose repo files when local triage is n
           command: process.execPath,
           args: [
             '-e',
-            "const fs = require('fs'); const css = fs.readFileSync('src/styles.css', 'utf8'); if (!css.includes('#2563eb')) process.exit(1);",
+            "const fs = require('fs'); const css = fs.readFileSync('src/styles.css', 'utf8'); if (!css.includes('#7c3aed')) process.exit(1);",
           ],
         },
       ],
-      codePatchGenerator: async ({ diagnosis, index, allowRepoFileSelection }) => {
+      codePatchGenerator: async () => {
         called = true;
-        assert.equal(allowRepoFileSelection, true);
-        assert.ok(index?.files.some((file) => file.path === 'src/api/checkout/quote.js'));
-        assert.ok(index?.files.some((file) => file.path === 'src/styles.css'));
-        assert.equal(diagnosis.shouldPatch, false);
-        const styles = index?.files.find((file) => file.path === 'src/styles.css');
-        assert.ok(styles);
-        return {
-          ok: true,
-          source: 'llm',
-          model: 'test-repo-selector',
-          summary: 'Changed the checkout CTA color.',
-          files: [
-            {
-              path: 'src/styles.css',
-              content: styles.content.replace('background: #111827;', 'background: #2563eb;'),
-            },
-          ],
-        };
+        return { ok: false, source: 'llm', files: [], error: 'should not be called for bounded color patch' };
       },
     });
 
-    assert.equal(called, true);
+    assert.equal(called, false);
     assert.equal(result.patch.ok, true);
-    assert.equal(result.patch.source, 'llm');
+    assert.equal(result.patch.source, 'deterministic');
     assert.deepEqual(result.diagnosis.targetFiles, ['src/styles.css']);
-    assert.equal(result.diagnosis.shouldPatch, true);
     assert.equal(result.verification?.ok, true);
     assert.deepEqual(result.verification?.modifiedFiles, ['src/styles.css']);
   } finally {
