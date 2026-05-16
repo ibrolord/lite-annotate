@@ -4,11 +4,13 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx api/index.ts",
-    "test": "tsx --test \"tests/**/*.test.ts\""
+    "test": "tsx --test \"tests/**/*.test.ts\" \"tests/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@hono/node-server": "^1.13.7",
+    "@railway/cli": "4.57.1",
     "hono": "^4.7.7"
   },
   "devDependencies": {
