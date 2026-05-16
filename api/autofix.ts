@@ -1,5 +1,5 @@
 import { runPersonBPipeline } from './worker/person_b_pipeline.js';
-import type { PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.js';
+import type { AutofixStageReporter, PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.js';
 import { createOpenAICodePatchGeneratorFromEnv } from './worker/patch/model_generate.js';
 import type { CodePatchGenerator } from './worker/patch/model_generate.js';
 import { openVerifiedPR } from './worker/pr_gate.js';
@@ -19,6 +19,7 @@ export interface AutofixOptions {
   skipPR?: boolean;
   runPackageScripts?: boolean;
   codePatchGenerator?: CodePatchGenerator;
+  onStage?: AutofixStageReporter;
 }
 
 export interface AutofixResult {
@@ -133,6 +134,7 @@ export async function runAutofix(
     smokeCommands: [],
     runPackageScripts: resolvedOptions.runPackageScripts,
     codePatchGenerator: resolvedOptions.codePatchGenerator ?? createOpenAICodePatchGeneratorFromEnv(),
+    onStage: resolvedOptions.onStage,
   });
 
   console.log(
@@ -141,20 +143,48 @@ export async function runAutofix(
 
   if (!pipeline.verification?.ok) {
     console.log(`[autofix] verification did not pass; skipping PR`);
+    await resolvedOptions.onStage?.({
+      key: 'verification',
+      label: 'Verify patch',
+      status: 'failed',
+      detail: pipeline.verification?.error ?? 'verification did not pass',
+      at: new Date().toISOString(),
+    });
     return { status: 'diagnosis_only', pipeline, pr: null };
   }
 
   if (resolvedOptions.skipPR) {
     console.log('[autofix] verified locally; dry run requested, skipping PR');
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'skipped',
+      detail: 'Preview mode requested; PR creation suppressed.',
+      at: new Date().toISOString(),
+    });
     return { status: 'verified_no_pr', pipeline, pr: null };
   }
 
   const githubRepo = resolvedOptions.githubRepo || resolvedOptions.repo;
   if (!resolvedOptions.githubToken || !githubRepo) {
     console.log('[autofix] verified locally; no GitHub credentials configured, skipping PR');
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'skipped',
+      detail: 'GitHub credentials or repository are not configured.',
+      at: new Date().toISOString(),
+    });
     return { status: 'verified_no_pr', pipeline, pr: null };
   }
 
+  await resolvedOptions.onStage?.({
+    key: 'pr',
+    label: 'PR gate',
+    status: 'running',
+    detail: githubRepo,
+    at: new Date().toISOString(),
+  });
   const prResult = await openVerifiedPR({
     pipeline,
     report: {
@@ -172,10 +202,24 @@ export async function runAutofix(
 
   if (!prResult.ok) {
     console.log(`[autofix] PR gate skipped: ${prResult.error}`);
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'skipped',
+      detail: prResult.error,
+      at: new Date().toISOString(),
+    });
     return { status: 'pr_skipped', pipeline, pr: null, prError: prResult.error };
   }
 
   console.log(`[autofix] PR opened: ${prResult.pr?.pr_url}`);
+  await resolvedOptions.onStage?.({
+    key: 'pr',
+    label: 'PR gate',
+    status: 'completed',
+    detail: prResult.pr?.pr_url,
+    at: new Date().toISOString(),
+  });
   return { status: 'pr_opened', pipeline, pr: prResult.pr };
 }
 

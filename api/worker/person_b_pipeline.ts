@@ -9,6 +9,28 @@ import type { CodePatchGenerator } from './patch/model_generate.js';
 import { verifyStructuredPatch } from './patch/verification.js';
 import type { PatchVerificationResult, VerificationCommandInput } from './patch/verification.js';
 
+export type AutofixStageKey =
+  | 'request'
+  | 'workspace'
+  | 'index'
+  | 'ranking'
+  | 'diagnosis'
+  | 'patch'
+  | 'verification'
+  | 'memory'
+  | 'pr';
+export type AutofixStageStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
+
+export interface AutofixStageEvent {
+  key: AutofixStageKey;
+  label: string;
+  status: AutofixStageStatus;
+  detail?: string;
+  at: string;
+}
+
+export type AutofixStageReporter = (event: AutofixStageEvent) => void | Promise<void>;
+
 export interface PersonBPipelineInput {
   report: ReportLike;
   workspacePath?: string;
@@ -20,6 +42,7 @@ export interface PersonBPipelineInput {
   runPackageScripts?: boolean;
   codePatchGenerator?: CodePatchGenerator;
   repoWideModelSelection?: boolean;
+  onStage?: AutofixStageReporter;
 }
 
 export interface PersonBPipelineResult {
@@ -31,21 +54,56 @@ export interface PersonBPipelineResult {
   verification: PatchVerificationResult | null;
 }
 
+async function reportStage(
+  input: PersonBPipelineInput,
+  key: AutofixStageKey,
+  label: string,
+  status: AutofixStageStatus,
+  detail?: string
+): Promise<void> {
+  if (!input.onStage) return;
+  await input.onStage({ key, label, status, detail, at: new Date().toISOString() });
+}
+
 export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<PersonBPipelineResult> {
   if (!input.workspacePath && !input.repo) {
     throw new Error('runPersonBPipeline requires workspacePath or repo');
   }
 
+  await reportStage(input, 'workspace', 'Load repository', 'running', input.workspacePath ?? input.repo);
   const workspacePath = input.workspacePath ?? (await ensureRepoWorkspace({
     repo: input.repo as string,
     workspaceRoot: input.workspaceRoot,
     branch: input.branch,
     githubToken: input.githubToken,
   })).path;
+  await reportStage(input, 'workspace', 'Load repository', 'completed', workspacePath);
 
+  await reportStage(input, 'index', 'Build code index', 'running');
   const index = buildCodeIndex(workspacePath);
+  await reportStage(input, 'index', 'Build code index', 'completed', `${index.files.length} source files indexed`);
+
+  await reportStage(input, 'ranking', 'Rank candidate files', 'running');
   const candidates = rankCandidateFiles(index, input.report);
+  await reportStage(
+    input,
+    'ranking',
+    'Rank candidate files',
+    'completed',
+    candidates.slice(0, 3).map((candidate) => candidate.path).join(', ') || 'no candidates'
+  );
+
+  await reportStage(input, 'diagnosis', 'Diagnose root cause', 'running');
   let diagnosis = diagnoseReport(input.report, candidates);
+  await reportStage(
+    input,
+    'diagnosis',
+    'Diagnose root cause',
+    'completed',
+    diagnosis.targetFiles.join(', ') || 'no target files'
+  );
+
+  await reportStage(input, 'patch', 'Generate scoped patch', 'running');
   let patch = generatePatchFromDiagnosis(diagnosis, candidates);
   const repoWideModelSelection = input.repoWideModelSelection ?? Boolean(input.codePatchGenerator);
   const shouldAskModel = input.codePatchGenerator && !patch.ok && diagnosis.shouldPatch;
@@ -88,9 +146,18 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
             files: [],
             source: 'llm',
             error: `Model patch generation threw: ${error instanceof Error ? error.message : String(error)}`,
-          };
+      };
     }
   }
+  await reportStage(
+    input,
+    'patch',
+    'Generate scoped patch',
+    patch.ok ? 'completed' : 'skipped',
+    patch.ok ? patch.files.map((file) => file.path).join(', ') : patch.error
+  );
+
+  await reportStage(input, 'verification', 'Verify patch', patch.ok ? 'running' : 'skipped');
   const verification = patch.ok
     ? verifyStructuredPatch({
         workspacePath,
@@ -100,6 +167,15 @@ export async function runPersonBPipeline(input: PersonBPipelineInput): Promise<P
         runPackageScripts: input.runPackageScripts,
       })
     : null;
+  if (verification) {
+    await reportStage(
+      input,
+      'verification',
+      'Verify patch',
+      verification.ok ? 'completed' : 'failed',
+      verification.commands.map((command) => `${command.name}: ${command.ok ? 'pass' : 'fail'}`).join(', ') || 'generic verification'
+    );
+  }
 
   return {
     workspacePath,

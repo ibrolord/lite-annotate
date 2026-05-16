@@ -16,13 +16,29 @@ import {
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
 import type { LiteReport } from './report_contract.js';
+import type { AutofixStageEvent, AutofixStageReporter } from './worker/person_b_pipeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 
 interface AutofixRunnerContext {
   dryRun: boolean;
+  onStage?: AutofixStageReporter;
 }
+
+type AutofixStageKey = AutofixStageEvent['key'];
+
+const AUTOFIX_STAGE_DEFS: Array<{ key: AutofixStageKey; label: string; pendingDetail: string }> = [
+  { key: 'request', label: 'Request received', pendingDetail: 'Waiting for Auto-Fix to start.' },
+  { key: 'workspace', label: 'Load repository', pendingDetail: 'Clones or opens the target repository.' },
+  { key: 'index', label: 'Build code index', pendingDetail: 'Scans source files and package scripts.' },
+  { key: 'ranking', label: 'Rank candidate files', pendingDetail: 'Uses report evidence to rank likely files.' },
+  { key: 'diagnosis', label: 'Diagnose root cause', pendingDetail: 'Chooses target files and fix strategy.' },
+  { key: 'patch', label: 'Generate scoped patch', pendingDetail: 'Creates a bounded source patch.' },
+  { key: 'verification', label: 'Verify patch', pendingDetail: 'Applies the patch and runs available checks.' },
+  { key: 'memory', label: 'Write memory', pendingDetail: 'Stores diagnosis and outcome receipts.' },
+  { key: 'pr', label: 'PR gate', pendingDetail: 'Opens a PR only if credentials and gates pass.' },
+];
 
 export function createApp(deps: {
   store?: ReportStore;
@@ -39,6 +55,7 @@ export function createApp(deps: {
       return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1], {
         skipPR: context.dryRun,
         runPackageScripts: context.dryRun ? false : undefined,
+        onStage: context.onStage,
       });
     });
 
@@ -430,11 +447,64 @@ export function createApp(deps: {
   app.post('/reports/:id/autofix', async (c) => {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
+    const dryRun = isTruthyFlag(c.req.query('dryRun'));
+    let stageSnapshot = initialAutofixStages(dryRun);
+    const updateAutofixStage = async (event: AutofixStageEvent) => {
+      stageSnapshot = mergeAutofixStage(stageSnapshot, event);
+      await store.update(record.report.id, (current) => ({
+        ...current,
+        autofix: {
+          ...(current.autofix ?? {}),
+          status: 'running',
+          mode: dryRun ? 'preview' : 'autofix',
+          stages: stageSnapshot,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      }));
+    };
+    let claimedRun = false;
+    await store.update(record.report.id, (current) => {
+      if (current.autofix?.status === 'running') return current;
+      claimedRun = true;
+      return {
+        ...current,
+        autofix: {
+          status: 'running',
+          mode: dryRun ? 'preview' : 'autofix',
+          stages: stageSnapshot,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    if (!claimedRun) {
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#autofix-result`, 303);
+      }
+      return c.json({
+        error: 'autofix_in_progress',
+        message: 'Auto-Fix is already running for this report.',
+      }, 409);
+    }
 
     try {
-      const dryRun = isTruthyFlag(c.req.query('dryRun'));
-      const result = await autofixRunner(record.report.id, record.report, { dryRun });
+      await updateAutofixStage({
+        key: 'request',
+        label: 'Request received',
+        status: 'completed',
+        detail: dryRun ? 'Preview Auto-Fix started.' : 'Open PR with Auto-Fix started.',
+        at: new Date().toISOString(),
+      });
+      const result = await autofixRunner(record.report.id, record.report, { dryRun, onStage: updateAutofixStage });
       const autofixSummary = summarizeAutofixResult(result);
+      await updateAutofixStage({
+        key: 'memory',
+        label: 'Write memory',
+        status: 'running',
+        detail: 'Writing diagnosis and outcome memory.',
+        at: new Date().toISOString(),
+      });
       await memory.putDiagnosis(record.report.id, autofixSummary.diagnosis);
       await memory.putOutcome(record.report.id, {
         status: autofixSummary.status,
@@ -442,8 +512,18 @@ export function createApp(deps: {
         verification: autofixSummary.verification,
       });
       const similar = await memory.searchSimilar(record.report);
+      await updateAutofixStage({
+        key: 'memory',
+        label: 'Write memory',
+        status: 'completed',
+        detail: 'Diagnosis and outcome memory stored.',
+        at: new Date().toISOString(),
+      });
+      const stageRecord = await store.get(record.report.id);
+      const stages = completeAutofixStages(readAutofixStages(stageRecord?.autofix), autofixSummary.status);
       const autofix = {
         ...autofixSummary,
+        stages,
         memoryImpact: buildMemoryImpact(record.report, record.memory, similar, autofixSummary),
       };
       const autofixWithDemoContext = {
@@ -464,6 +544,7 @@ export function createApp(deps: {
       const autofix = {
         status: 'failed',
         error: errorMessage(err),
+        stages: failActiveAutofixStage(stageSnapshot, errorMessage(err)),
         updatedAt: new Date().toISOString(),
       };
       await store.update(record.report.id, (current) => ({
@@ -832,6 +913,38 @@ function renderReportHtml(
     .analysis-details summary { padding: 12px; }
     .analysis-details p { padding: 0 12px 12px; font-size: 13px; }
     .analysis-details pre { margin: 0 12px 12px; max-height: 320px; }
+    .autofix-progress { display: grid; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .autofix-progress-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+    .autofix-progress-head strong { font-size: 14px; }
+    .autofix-progress-head span { color: var(--muted); font-size: 13px; line-height: 1.4; text-align: right; }
+    .autofix-steps { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+    .autofix-step {
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      gap: 9px;
+      align-items: start;
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+    }
+    .autofix-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-top: 5px;
+      background: var(--line);
+      border: 1px solid var(--muted);
+    }
+    .autofix-step strong { display: block; font-size: 13px; line-height: 1.35; }
+    .autofix-step p { margin-top: 2px; font-size: 12px; }
+    .autofix-step em { color: var(--muted); font-style: normal; font-size: 12px; font-weight: 760; text-transform: uppercase; }
+    .autofix-step[data-status="completed"] .autofix-dot { background: var(--success); border-color: var(--success); }
+    .autofix-step[data-status="running"] .autofix-dot { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+    .autofix-step[data-status="failed"] .autofix-dot { background: var(--danger); border-color: var(--danger); }
+    .autofix-step[data-status="skipped"] .autofix-dot { background: var(--warn); border-color: var(--warn); }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.35); opacity: .65; }
+    }
     .screen-stage { padding: 16px; }
     .screen-frame {
       min-height: 380px;
@@ -1006,10 +1119,10 @@ function renderReportHtml(
         </div>
       </div>
       <div class="actions" aria-label="Analysis actions">
-        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
           <button class="safe" type="submit">Preview Auto-Fix</button>
         </form>
-        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix">
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix" data-autofix-form data-autofix-mode="autofix">
           <button class="danger" type="submit">Open PR with Auto-Fix</button>
         </form>
       </div>
@@ -1115,6 +1228,71 @@ function renderReportHtml(
   <script>
     (() => {
       const MAX_RAW_CHARS = 120000;
+      const reportViewUrl = "/reports/${encodeURIComponent(reportId)}/view#autofix-result";
+      const resultUrl = "/reports/${encodeURIComponent(reportId)}/autofix";
+
+      function updateProgressFromStages(stages) {
+        if (!Array.isArray(stages)) return;
+        const root = document.querySelector('[data-autofix-progress]');
+        if (!root) return;
+        stages.forEach((stage) => {
+          if (!stage || typeof stage.key !== 'string') return;
+          const item = root.querySelector('[data-stage="' + stage.key + '"]');
+          if (!item) return;
+          item.dataset.status = typeof stage.status === 'string' ? stage.status : 'pending';
+          const title = item.querySelector('strong');
+          const detail = item.querySelector('p');
+          const status = item.querySelector('em');
+          if (title && typeof stage.label === 'string') title.textContent = stage.label;
+          if (detail) detail.textContent = typeof stage.detail === 'string' ? stage.detail : '';
+          if (status) status.textContent = item.dataset.status;
+        });
+        const active = stages.find((stage) => stage.status === 'running')
+          || stages.find((stage) => stage.status === 'failed')
+          || [...stages].reverse().find((stage) => stage.status === 'completed' || stage.status === 'skipped');
+        const current = root.querySelector('[data-autofix-current]');
+        const currentDetail = root.querySelector('[data-autofix-current-detail]');
+        if (current && active) {
+          current.textContent = active.status === 'running'
+            ? 'Running: ' + active.label
+            : active.status === 'failed'
+              ? 'Stopped: ' + active.label
+              : 'Last stage: ' + active.label;
+        }
+        if (currentDetail && active) currentDetail.textContent = active.detail || '';
+      }
+
+      async function refreshProgress() {
+        const response = await fetch(resultUrl, { headers: { accept: 'application/json' } });
+        if (!response.ok) return;
+        const body = await response.json();
+        updateProgressFromStages(body && body.autofix && body.autofix.stages);
+      }
+
+      document.querySelectorAll('[data-autofix-form]').forEach((form) => {
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          document.querySelectorAll('[data-autofix-form] button').forEach((button) => { button.disabled = true; });
+          updateProgressFromStages([
+            { key: 'request', label: 'Request received', status: 'completed', detail: form.dataset.autofixMode === 'preview' ? 'Preview Auto-Fix started.' : 'Open PR with Auto-Fix started.' },
+            { key: 'workspace', label: 'Load repository', status: 'running', detail: 'Waiting for backend stage updates.' },
+          ]);
+          const poll = window.setInterval(() => {
+            refreshProgress().catch(() => undefined);
+          }, 1200);
+          try {
+            const response = await fetch(form.action, { method: 'POST', headers: { accept: 'application/json' } });
+            const body = await response.json().catch(() => null);
+            updateProgressFromStages(body && body.autofix && body.autofix.stages);
+            window.clearInterval(poll);
+            window.location.assign(reportViewUrl);
+          } catch {
+            window.clearInterval(poll);
+            window.location.assign(reportViewUrl);
+          }
+        });
+      });
+
       document.querySelectorAll('[data-analysis-src]').forEach((details) => {
         details.addEventListener('toggle', async () => {
           if (!details.open || details.dataset.loaded === 'true') return;
@@ -1512,6 +1690,37 @@ function summarizeStoredAutofix(autofix: unknown): {
   return { candidateFiles, targetFiles, patchSource, patchSummary, prUrl, rootCause, verificationOk, verificationCommands };
 }
 
+function renderAutofixProgressHtml(autofix: unknown): string {
+  const stages = readAutofixStages(autofix);
+  const displayedStages = stages.length ? stages : initialAutofixStages(false);
+  const running = displayedStages.find((stage) => stage.status === 'running');
+  const failed = displayedStages.find((stage) => stage.status === 'failed');
+  const lastCompleted = [...displayedStages].reverse().find((stage) => stage.status === 'completed' || stage.status === 'skipped');
+  const headline = running
+    ? `Running: ${running.label}`
+    : failed
+      ? `Stopped: ${failed.label}`
+      : lastCompleted
+        ? `Last stage: ${lastCompleted.label}`
+        : 'Auto-Fix stages';
+  const detail = running?.detail ?? failed?.detail ?? lastCompleted?.detail ?? 'Start Auto-Fix to watch backend stages update.';
+  const items = displayedStages.map((stage) => (
+    `<li class="autofix-step" data-stage="${escapeHtml(stage.key)}" data-status="${escapeHtml(stage.status)}">
+      <span class="autofix-dot" aria-hidden="true"></span>
+      <div><strong>${escapeHtml(stage.label)}</strong><p>${escapeHtml(stage.detail ?? '')}</p></div>
+      <em>${escapeHtml(stage.status)}</em>
+    </li>`
+  )).join('');
+
+  return `<div class="autofix-progress" data-autofix-progress>
+    <div class="autofix-progress-head">
+      <strong data-autofix-current>${escapeHtml(headline)}</strong>
+      <span data-autofix-current-detail>${escapeHtml(detail)}</span>
+    </div>
+    <ol class="autofix-steps" data-autofix-steps>${items}</ol>
+  </div>`;
+}
+
 function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/autofix">
     <summary>Debug Auto-Fix JSON</summary>
@@ -1519,7 +1728,8 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   </details>`;
 
   if (!autofix || typeof autofix !== 'object') {
-    return `<div class="analysis-body">
+    return `${renderAutofixProgressHtml(autofix)}
+    <div class="analysis-body">
       <p>No Auto-Fix run yet. Use Preview Auto-Fix to verify diagnosis and patch gates without opening a public PR.</p>
     </div>
     ${rawDetails}`;
@@ -1552,7 +1762,8 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
     ? `<a href="${escapeHtml(summary.prUrl)}">Open GitHub PR</a>`
     : 'No PR opened';
 
-  return `<div class="result-card">
+  return `${renderAutofixProgressHtml(autofix)}
+  <div class="result-card">
     <div class="result-headline">
       <strong>${escapeHtml(headline)}</strong>
       <p>${escapeHtml(subcopy)}</p>
@@ -1623,7 +1834,7 @@ function renderGStackInvestigationHtml(
       </form>`
     : '';
   const followup = investigation.recommendedAction.type === 'autofix' && investigation.raw?.result
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1">
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
         <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
       </form>`
     : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
@@ -1714,6 +1925,77 @@ function analysisStatus(autofix: unknown): string {
   if (!autofix || typeof autofix !== 'object') return 'not run';
   const status = (autofix as { status?: unknown }).status;
   return typeof status === 'string' ? status : 'recorded';
+}
+
+function initialAutofixStages(dryRun: boolean): AutofixStageEvent[] {
+  const now = new Date().toISOString();
+  return AUTOFIX_STAGE_DEFS.map((stage) => ({
+    key: stage.key,
+    label: stage.label,
+    status: stage.key === 'pr' && dryRun ? 'skipped' : 'pending',
+    detail: stage.key === 'pr' && dryRun ? 'Preview mode stops before PR creation.' : stage.pendingDetail,
+    at: now,
+  }));
+}
+
+function readAutofixStages(autofix: unknown): AutofixStageEvent[] {
+  if (!autofix || typeof autofix !== 'object') return [];
+  const stages = (autofix as { stages?: unknown }).stages;
+  if (!Array.isArray(stages)) return [];
+  return stages.filter(isAutofixStageEvent);
+}
+
+function isAutofixStageEvent(value: unknown): value is AutofixStageEvent {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Partial<Record<keyof AutofixStageEvent, unknown>>;
+  return typeof event.key === 'string' &&
+    typeof event.label === 'string' &&
+    typeof event.status === 'string' &&
+    typeof event.at === 'string';
+}
+
+function mergeAutofixStage(stages: AutofixStageEvent[], event: AutofixStageEvent): AutofixStageEvent[] {
+  const existing = stages.length ? stages : initialAutofixStages(false);
+  const merged = existing.map((stage) => stage.key === event.key ? event : stage);
+  return merged.some((stage) => stage.key === event.key) ? merged : [...merged, event];
+}
+
+function completeAutofixStages(stages: AutofixStageEvent[], status: string): AutofixStageEvent[] {
+  const now = new Date().toISOString();
+  const existing = stages.length ? stages : initialAutofixStages(false);
+  return existing.map((stage) => {
+    if (stage.status !== 'pending' && stage.status !== 'running') return stage;
+    if (stage.key === 'pr' && (status === 'verified_no_pr' || status === 'diagnosis_only')) {
+      return { ...stage, status: 'skipped', detail: 'No PR was opened for this run.', at: now };
+    }
+    if (stage.status === 'running') return { ...stage, status: 'completed', at: now };
+    return stage;
+  });
+}
+
+function failActiveAutofixStage(stages: AutofixStageEvent[], message: string): AutofixStageEvent[] {
+  const now = new Date().toISOString();
+  const existing = stages.length ? stages : initialAutofixStages(false);
+  let runningIndex = -1;
+  for (let index = existing.length - 1; index >= 0; index -= 1) {
+    if (existing[index].status === 'running') {
+      runningIndex = index;
+      break;
+    }
+  }
+  if (runningIndex === -1) {
+    return mergeAutofixStage(existing, {
+      key: 'request',
+      label: 'Request received',
+      status: 'failed',
+      detail: message,
+      at: now,
+    });
+  }
+  return existing.map((stage, index) => index === runningIndex
+    ? { ...stage, status: 'failed', detail: message, at: now }
+    : stage
+  );
 }
 
 function gstackStatus(gstackReview: unknown): string {

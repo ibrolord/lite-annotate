@@ -138,6 +138,10 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Open PR with Auto-Fix/);
     assert.doesNotMatch(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, /Preview Auto-Fix/);
+    assert.match(viewBeforeHtml, /data-autofix-form/);
+    assert.match(viewBeforeHtml, /Auto-Fix stages/);
+    assert.match(viewBeforeHtml, /Load repository/);
+    assert.match(viewBeforeHtml, /PR gate/);
     assert.match(viewBeforeHtml, /Captured screen/);
     assert.match(viewBeforeHtml, /Interaction summary/);
     assert.match(viewBeforeHtml, /Evidence brief/);
@@ -163,6 +167,15 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.equal(autofixBody.autofix.candidates[0].path, 'src/users.js');
     assert.equal(autofixBody.autofix.diagnosis.targetFiles[0], 'src/users.js');
     assert.equal(autofixBody.autofix.verification.ok, true);
+    assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
+      stage.key === 'request' && stage.status === 'completed'
+    )));
+    assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
+      stage.key === 'memory' && stage.status === 'completed'
+    )));
+    assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
+      stage.key === 'pr' && stage.status === 'skipped'
+    )));
     assert.equal(autofixBody.autofix.memoryImpact.outcomeMemory, 'diagnosis and outcome written');
     assert.ok(autofixBody.autofix.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'code_evidence'));
     assert.ok(autofixBody.autofix.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'verification'));
@@ -191,6 +204,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
     const viewAfterHtml = await viewAfter.text();
     assert.match(viewAfterHtml, /Auto-Fix Result/);
+    assert.match(viewAfterHtml, /Last stage: PR gate/);
+    assert.match(viewAfterHtml, /data-stage="memory" data-status="completed"/);
     assert.match(viewAfterHtml, /Verified patch ready/);
     assert.match(viewAfterHtml, /verified_no_pr/);
     assert.match(viewAfterHtml, /src\/users\.js/);
@@ -258,6 +273,42 @@ test('POST /reports/:id/repo updates the Auto-Fix target repo shown on the repor
     body: new URLSearchParams({ repo: 'not a repo' }).toString(),
   });
   assert.equal(invalid.status, 400);
+});
+
+test('POST /reports/:id/autofix rejects a second run while one is active', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-autofix-running-'));
+  const store = new ReportStore(join(root, 'reports'));
+  let runnerCalled = false;
+  const app = createApp({
+    store,
+    memory: createMemoryAdapter(),
+    autofixRunner: async () => {
+      runnerCalled = true;
+      return { status: 'verified_no_pr', pipeline: {}, pr: null };
+    },
+  });
+
+  const post = await app.request('/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fixture),
+  });
+  const body = await post.json();
+  await store.update(body.reportId, (current) => ({
+    ...current,
+    autofix: {
+      status: 'running',
+      stages: [],
+      updatedAt: new Date().toISOString(),
+    },
+  }));
+
+  const second = await app.request(`/reports/${body.reportId}/autofix`, { method: 'POST' });
+  assert.equal(second.status, 409);
+  assert.equal(runnerCalled, false);
+  const secondBody = await second.json();
+  assert.equal(secondBody.error, 'autofix_in_progress');
 });
 
 test('report view shows the first error-level console event instead of startup logs', async () => {
