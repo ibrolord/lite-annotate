@@ -13,6 +13,7 @@
   let annotationMarker = null;
   let annotationHighlight = null;
   let cancelAnnotationMode = null;
+  let annotationStatusElement = null;
 
   function now() {
     return new Date().toISOString();
@@ -185,8 +186,7 @@
   function recordRouteChange(type) {
     recordSession(type, null, { route: currentRoute() });
     if (selectedAnnotation && selectedAnnotation.route !== currentRoute()) {
-      selectedAnnotation = null;
-      removeAnnotationChrome();
+      clearSelectedAnnotation('Annotation cleared after route change.');
     }
   }
 
@@ -219,6 +219,22 @@
     annotationMarker = null;
     annotationHighlight = null;
   }
+
+  function clearSelectedAnnotation(message) {
+    if (!selectedAnnotation && !annotationMarker && !annotationHighlight) return false;
+    selectedAnnotation = null;
+    removeAnnotationChrome();
+    if (message && annotationStatusElement) annotationStatusElement.textContent = message;
+    window.dispatchEvent(new CustomEvent('lite-annotate:annotation-cleared'));
+    return true;
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || cancelAnnotationMode) return;
+    if (!clearSelectedAnnotation('Annotation cleared.')) return;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+  }, true);
 
   function drawAnnotationChrome(annotation) {
     removeAnnotationChrome();
@@ -424,6 +440,7 @@
       if (popover) {
         popover.remove();
         popover = null;
+        annotationStatusElement = null;
         return;
       }
 
@@ -461,6 +478,7 @@
 
       const annotationStatus = el('div', 'margin:-2px 0 10px;font-size:12px;color:#6b7280;');
       annotationStatus.textContent = 'No page annotation pinned yet.';
+      annotationStatusElement = annotationStatus;
 
       const submitButton = el('button',
         'width:100%;padding:10px;background:#111827;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:500;'

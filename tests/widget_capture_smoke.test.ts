@@ -119,6 +119,59 @@ test('widget can cancel annotation mode before submitting', async () => {
   assert.equal(submitted[0].annotation.selector, undefined);
 });
 
+test('widget clears an already pinned annotation with Escape', async () => {
+  const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
+  const submitted: any[] = [];
+  const context = createBrowserContext(submitted);
+  let annotationCleared = false;
+
+  vm.runInNewContext(script, context);
+  context.window.addEventListener('lite-annotate:annotation-cleared', () => {
+    annotationCleared = true;
+  });
+
+  const launcher = context.document.body.children.find((child: any) => child.getAttribute('data-lite-annotate-launcher') === 'true');
+  assert.ok(launcher);
+  await launcher.dispatchEvent({ type: 'click', target: launcher });
+
+  const popover = context.document.body.children.find((child: any) => child !== launcher);
+  const titleInput = popover.children.find((child: any) => child.tagName === 'INPUT');
+  const annotate = popover.children.find((child: any) => child.textContent === 'Annotate Page');
+  const annotationStatus = popover.children.find((child: any) => child.textContent === 'No page annotation pinned yet.');
+  const submit = popover.children.find((child: any) => child.textContent === 'Submit Report');
+
+  titleInput.value = 'Cleared annotation report';
+  await annotate.dispatchEvent({ type: 'click', target: annotate });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  context.document.dispatchEvent({
+    type: 'click',
+    target: fakeTarget('button', 'Load User Profile', 'load-profile'),
+    pageX: 128,
+    pageY: 244,
+    clientX: 128,
+    clientY: 244,
+    preventDefault() {},
+    stopPropagation() {},
+    stopImmediatePropagation() {},
+  });
+  assert.equal(annotationStatus.textContent, 'Pinned button#load-profile:Load User Profile');
+
+  context.window.dispatchEvent({
+    type: 'keydown',
+    key: 'Escape',
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(annotationStatus.textContent, 'Annotation cleared.');
+  assert.equal(annotationCleared, true);
+
+  await submit.dispatchEvent({ type: 'click', target: submit });
+
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].annotation.target, undefined);
+  assert.equal(submitted[0].annotation.selector, undefined);
+});
+
 function createBrowserContext(submitted: any[]): any {
   const listeners = new Map<string, Function[]>();
   const document = new FakeDocument();
