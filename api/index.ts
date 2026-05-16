@@ -8,7 +8,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMemoryAdapter, type MemoryAdapter, type MemorySearchResult } from './gbrain.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
-import { runAutofix, type AutofixResult } from './autofix.js';
 import type { LiteReport } from './report_contract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +23,10 @@ export function createApp(deps: {
   const memory = deps.memory ?? createMemoryAdapter();
   const autofixRunner: (reportId: string, report: LiteReport) => Promise<unknown> =
     deps.autofixRunner ??
-    ((reportId, report) => runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1]));
+    (async (reportId, report) => {
+      const { runAutofix } = await import('./autofix.js');
+      return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1]);
+    });
 
   app.use('*', cors());
 
@@ -687,16 +689,21 @@ interface StoredAutofixSummary extends Record<string, unknown> {
   updatedAt: string;
 }
 
-function summarizeAutofixResult(result: unknown): StoredAutofixSummary {
-  const typed = result as Partial<AutofixResult> & {
-    pipeline?: {
-      candidates?: Array<{ path: string; score: number; reasons: string[] }>;
-      diagnosis?: unknown;
-      patch?: unknown;
-      verification?: unknown;
-    };
-    meta?: unknown;
+interface AutofixRunnerResult {
+  status?: string;
+  pipeline?: {
+    candidates?: Array<{ path: string; score: number; reasons: string[] }>;
+    diagnosis?: unknown;
+    patch?: unknown;
+    verification?: unknown;
   };
+  pr?: unknown;
+  prError?: string;
+  meta?: unknown;
+}
+
+function summarizeAutofixResult(result: unknown): StoredAutofixSummary {
+  const typed = result as AutofixRunnerResult;
   return {
     status: typed.status ?? 'unknown',
     candidates: typed.pipeline?.candidates?.slice(0, 5) ?? [],
