@@ -1,6 +1,8 @@
 # Lite Annotate
 
-Lite Annotate turns in-product bug reports into engineering-ready work. A small browser widget captures the user's report together with the technical context engineers usually have to reconstruct: route, browser metadata, console errors, network breadcrumbs, session breadcrumbs, selected element context, and screenshot status.
+Lite Annotate turns in-product bug reports into engineering-ready work. Setup is one config block and one async script tag; no app package, framework adapter, build plugin, or SDK call is required for the capture path.
+
+A small browser widget captures the user's report together with the technical context engineers usually have to reconstruct: route, browser metadata, console errors, network breadcrumbs, session breadcrumbs, selected element context, and screenshot status.
 
 The backend stores each report as durable engineering memory, retrieves related prior context, runs repo-aware diagnosis, generates a scoped patch when the evidence supports it, verifies the patch locally, and can open a guarded GitHub pull request.
 
@@ -26,7 +28,7 @@ Lite Annotate makes that handoff explicit. Each report becomes a structured engi
 - **Verification:** generated patches are constrained to diagnosed target files and checked in a temporary workspace before any PR action.
 - **Review:** report views expose memory impact, cold-agent versus memory-assisted comparison, verification output, and handoff payloads for engineering review.
 
-## Integration
+## Setup in Minutes
 
 Add the widget config and hosted script to any browser-based web app:
 
@@ -39,15 +41,20 @@ Add the widget config and hosted script to any browser-based web app:
 <script async src="https://lite-annotate.example.com/widget.js"></script>
 ```
 
-The customer application does not need an npm package, framework adapter, build plugin, or SDK call for the capture path. `ANNOTATE_REPO` connects the report to the GitHub repository Lite Annotate should analyze.
+That is the customer-app integration. `ANNOTATE_REPO` connects each report to the GitHub repository Lite Annotate should analyze, while the widget itself runs outside the app bundle.
 
-Typical rollout:
+Fast capture path:
 
-1. Add the widget snippet to the target app.
-2. Submit a report from the embedded widget.
-3. Review captured reports at `/reports/dashboard` or `/reports/:id/view`.
-4. Run dry-run analysis with `POST /reports/:id/autofix?dryRun=1`.
-5. Enable GitHub credentials only when verified PR creation is desired.
+1. Paste the config block and script tag.
+2. Set `ANNOTATE_API_URL`, `ANNOTATE_PROJECT_ID`, and `ANNOTATE_REPO`.
+3. Open the app and submit a report from the widget.
+4. Review captured reports at `/reports/dashboard` or `/reports/:id/view`.
+
+Repo-aware analysis is the next step:
+
+1. Run dry-run analysis with `POST /reports/:id/autofix?dryRun=1`.
+2. Add GitHub credentials only when private repo access or verified PR creation is desired.
+3. Use `POST /reports/:id/autofix` for the full gated PR path.
 
 Dry-run analysis is the default review path. It exercises diagnosis and verification without opening a public branch or pull request.
 
