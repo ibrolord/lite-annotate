@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ interface RunnerJob extends StoredGStackReviewRecord {
   request: GStackReviewRequest;
   workDir: string;
   logs?: string;
+  callbackPending?: boolean;
+  callbackError?: string;
 }
 
 const app = new Hono();
@@ -231,25 +233,35 @@ async function callbackResult(job: RunnerJob, result: GStackReviewResult): Promi
     },
     body: JSON.stringify(result),
   });
+  if (response.ok || response.status === 409) {
+    return;
+  }
   if (!response.ok) {
     throw new Error(`Lite Annotate callback failed: ${response.status} ${await response.text()}`);
   }
 }
 
-async function callbackResultWithRetry(job: RunnerJob, result: GStackReviewResult): Promise<void> {
+async function callbackResultWithRetry(job: RunnerJob, result: GStackReviewResult): Promise<boolean> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       await callbackResult(job, result);
-      return;
+      job.callbackPending = false;
+      delete job.callbackError;
+      job.updatedAt = new Date().toISOString();
+      await saveJob(job);
+      return true;
     } catch (err) {
       lastError = err;
       await delay(attempt * 2000);
     }
   }
-  job.error = `Lite Annotate callback failed after retries: ${redactSecrets(errorMessage(lastError))}`;
+  job.callbackPending = true;
+  job.callbackError = `Lite Annotate callback failed after retries: ${redactSecrets(errorMessage(lastError))}`;
+  job.error = job.callbackError;
   job.updatedAt = new Date().toISOString();
   await saveJob(job);
+  return false;
 }
 
 function delay(ms: number): Promise<void> {
@@ -270,7 +282,10 @@ function runnerWorkDir(): string {
 
 async function saveJob(job: RunnerJob): Promise<void> {
   await mkdir(runnerJobsDir(), { recursive: true });
-  await writeFile(join(runnerJobsDir(), `${job.jobId}.json`), `${JSON.stringify(job, null, 2)}\n`, 'utf8');
+  const finalPath = join(runnerJobsDir(), `${job.jobId}.json`);
+  const tempPath = join(runnerJobsDir(), `${job.jobId}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(tempPath, `${JSON.stringify(job, null, 2)}\n`, 'utf8');
+  await rename(tempPath, finalPath);
 }
 
 async function loadJob(jobId: string): Promise<RunnerJob | null> {
@@ -295,28 +310,47 @@ async function recoverInterruptedJobs(): Promise<number> {
   let recovered = 0;
   for (const filename of filenames) {
     if (!filename.endsWith('.json')) continue;
-    const job = await loadJob(filename.slice(0, -'.json'.length));
-    if (!job || (job.status !== 'queued' && job.status !== 'running')) continue;
+    let job: RunnerJob | null;
+    try {
+      job = await loadJob(filename.slice(0, -'.json'.length));
+    } catch (err) {
+      await quarantineJobFile(filename, err);
+      continue;
+    }
+    if (!job) continue;
 
-    const statusBeforeRestart = job.status;
-    const now = new Date().toISOString();
-    job.status = 'failed';
-    job.error = `GStack runner restarted before ${statusBeforeRestart} job completed`;
-    job.result = {
-      jobId: job.jobId,
-      reportId: job.reportId,
-      status: 'failed',
-      mode: job.mode,
-      commandsRun: [],
-      summary: job.error,
-      completedAt: now,
-    };
-    job.updatedAt = now;
-    await saveJob(job);
-    await callbackResultWithRetry(job, job.result);
-    recovered += 1;
+    if (job.status === 'queued' || job.status === 'running') {
+      const statusBeforeRestart = job.status;
+      const now = new Date().toISOString();
+      job.status = 'failed';
+      job.error = `GStack runner restarted before ${statusBeforeRestart} job completed`;
+      job.result = {
+        jobId: job.jobId,
+        reportId: job.reportId,
+        status: 'failed',
+        mode: job.mode,
+        commandsRun: [],
+        summary: job.error,
+        completedAt: now,
+      };
+      job.callbackPending = true;
+      job.updatedAt = now;
+      await saveJob(job);
+      recovered += 1;
+    }
+
+    if (job.callbackPending && job.result) {
+      await callbackResultWithRetry(job, job.result);
+    }
   }
   return recovered;
+}
+
+async function quarantineJobFile(filename: string, err: unknown): Promise<void> {
+  const source = join(runnerJobsDir(), filename);
+  const target = join(runnerJobsDir(), `${filename}.corrupt-${Date.now()}`);
+  await rename(source, target);
+  console.error(`quarantined corrupt GStack job ${filename}: ${errorMessage(err)}`);
 }
 
 function safeJob(job: RunnerJob): Record<string, unknown> {
@@ -329,6 +363,8 @@ function safeJob(job: RunnerJob): Record<string, unknown> {
     updatedAt: job.updatedAt,
     result: job.result,
     error: job.error,
+    callbackPending: job.callbackPending ?? false,
+    callbackError: job.callbackError,
   };
 }
 
@@ -472,17 +508,16 @@ function errorMessage(err: unknown): string {
 const directRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (directRun) {
   const port = Number.parseInt(process.env.PORT || '3015', 10);
-  void recoverInterruptedJobs()
-    .then((recovered) => {
-      if (recovered > 0) console.log(`recovered ${recovered} interrupted GStack job(s)`);
-      serve({ fetch: app.fetch, port }, () => {
-        console.log(`gstack-runner API running on http://localhost:${port}`);
+  serve({ fetch: app.fetch, port }, () => {
+    console.log(`gstack-runner API running on http://localhost:${port}`);
+    void recoverInterruptedJobs()
+      .then((recovered) => {
+        if (recovered > 0) console.log(`recovered ${recovered} interrupted GStack job(s)`);
+      })
+      .catch((err) => {
+        console.error(`gstack-runner recovery failed: ${errorMessage(err)}`);
       });
-    })
-    .catch((err) => {
-      console.error(`gstack-runner recovery failed: ${errorMessage(err)}`);
-      process.exit(1);
-    });
+  });
 }
 
 export { app, buildRunnerCommandEnv, repoUrl as buildCloneUrl, recoverInterruptedJobs, redactSecrets };
