@@ -50,8 +50,8 @@ export interface ReportLike {
   description?: string;
   url?: string;
   route?: string;
-  console?: Array<{ level?: string; message?: string; msg?: string }>;
-  consoleLogs?: Array<{ level?: string; message?: string; msg?: string }>;
+  console?: Array<{ level?: string; message?: string; msg?: string; stack?: string }>;
+  consoleLogs?: Array<{ level?: string; message?: string; msg?: string; stack?: string }>;
   network?: Array<{ method?: string; url?: string; status?: number; failed?: boolean }>;
   session?: Array<{ type?: string; target?: string }>;
 }
@@ -244,7 +244,7 @@ export function buildCodeIndex(root: string): CodeIndex {
 
 function reportText(report: ReportLike): string {
   const consoleEvents = [...(report.console ?? []), ...(report.consoleLogs ?? [])]
-    .map((entry) => `${entry.level ?? ''} ${entry.message ?? entry.msg ?? ''}`)
+    .map((entry) => `${entry.level ?? ''} ${entry.message ?? entry.msg ?? ''}\n${entry.stack ?? ''}`)
     .join('\n');
   const networkEvents = (report.network ?? [])
     .map((entry) => `${entry.method ?? ''} ${entry.url ?? ''} ${entry.status ?? ''} ${entry.failed ? 'failed' : ''}`)
@@ -292,9 +292,16 @@ function quotedConsoleSymbols(report: ReportLike): string[] {
 }
 
 function stackTracePaths(report: ReportLike): string[] {
-  return unique(
-    extractAll(reportText(report), /((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g)
+  const text = reportText(report);
+  const urlPaths = extractAll(
+    text,
+    /https?:\/\/[^)\s]+\/((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g
   );
+  const relativePaths = extractAll(
+    text,
+    /(?:^|[^A-Za-z0-9_./-])((?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?)(?::\d+)?/g
+  );
+  return unique([...urlPaths, ...relativePaths]);
 }
 
 function addScore(

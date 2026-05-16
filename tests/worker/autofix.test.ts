@@ -45,6 +45,7 @@ function makeGitRepo(): string {
 function makeCommerceRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'lite-annotate-commerce-autofix-'));
   mkdirSync(join(root, 'src'), { recursive: true });
+  mkdirSync(join(root, 'api', 'customers'), { recursive: true });
   writeFileSync(
     join(root, 'src', 'customer.js'),
     `const customers = [
@@ -63,6 +64,30 @@ export function getCustomerById(customerId) {
 export function formatLoyaltyGreeting(customerId) {
   const customer = getCustomerById(customerId);
   return \`Welcome back, \${customer.name}. Your \${customer.tier} credit is $\${customer.credits}.\`;
+}
+`
+  );
+  writeFileSync(
+    join(root, 'src', 'app.js'),
+    `import { formatLoyaltyGreeting } from './customer.js';
+
+async function loadLoyaltyProfile() {
+  const response = await fetch('/api/customers/vip-404');
+  if (!response.ok) console.warn('[cedar-and-sail] loyalty profile lookup returned', response.status);
+  return formatLoyaltyGreeting('vip-404');
+}
+
+export { loadLoyaltyProfile };
+`
+  );
+  writeFileSync(
+    join(root, 'api', 'customers', 'vip-404.js'),
+    `export default function handler(_req, res) {
+  res.status(404).json({
+    error: 'customer_not_found',
+    id: 'vip-404',
+    message: 'No loyalty profile exists for this customer.'
+  });
 }
 `
   );
@@ -198,7 +223,8 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
       console: [
         {
           level: 'error',
-          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name') at formatLoyaltyGreeting (src/customer.js:16:36)",
+          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name')",
+          stack: "TypeError: Cannot read properties of undefined (reading 'name')\n    at formatLoyaltyGreeting (https://lite-annotate-commerce-demo.vercel.app/src/customer.js:16:36)\n    at HTMLButtonElement.loadLoyaltyProfile (https://lite-annotate-commerce-demo.vercel.app/src/app.js:137:22)",
         },
       ],
       network: [{ method: 'GET', url: '/api/customers/vip-404', status: 404, failed: true }],
@@ -244,7 +270,8 @@ test('runAutofix uses the report repo before hosted env repo defaults', async ()
       console: [
         {
           level: 'error',
-          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name') at formatLoyaltyGreeting (src/customer.js:16:36)",
+          message: "[cedar-and-sail] loyalty profile crashed TypeError: Cannot read properties of undefined (reading 'name')",
+          stack: "TypeError: Cannot read properties of undefined (reading 'name')\n    at formatLoyaltyGreeting (https://lite-annotate-commerce-demo.vercel.app/src/customer.js:16:36)\n    at HTMLButtonElement.loadLoyaltyProfile (https://lite-annotate-commerce-demo.vercel.app/src/app.js:137:22)",
         },
       ],
       network: [{ method: 'GET', url: '/api/customers/vip-404', status: 404, failed: true }],

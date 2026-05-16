@@ -23,7 +23,7 @@ const MAX_TARGET_FILES = 2;
 
 function consoleMessages(report: ReportLike): string[] {
   return [...(report.console ?? []), ...(report.consoleLogs ?? [])]
-    .map((entry) => entry.message ?? entry.msg ?? '')
+    .flatMap((entry) => [entry.message ?? entry.msg ?? '', entry.stack ?? ''])
     .filter(Boolean);
 }
 
