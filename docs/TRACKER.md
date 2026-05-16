@@ -8,21 +8,21 @@ Source of truth for Person A / Person B ownership, current status, and commit-le
 
 | Lane | Owner scope | Status | Current proof | Next action |
 | --- | --- | --- | --- | --- |
-| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_234d5d51-b5a4-4395-9031-5016dd446a1b`; Railway deployment `d632704f-03f5-4383-9efc-3c7a0c879d72`; `/reports/dashboard` shows context and handoff | Keep tracker updated if capture/report contract changes |
-| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; `/reports/:id/autofix` stores and exposes Person B results | Run hosted `/reports/:id/autofix` with target repo and GitHub credentials configured |
+| Person A | Widget capture, hosted API, report persistence, memory write/search, report visibility, Person B handoff payload | Complete for hackathon demo | Hosted report `bug_a14c55c4-8b49-4a53-991d-e2e787490eaa`; Railway deployment `cb881adf-7336-4571-af21-96ad2c3c653f`; `/reports/dashboard` shows context and handoff | Keep tracker updated if capture/report contract changes |
+| Person B | Repo indexing, candidate ranking, diagnosis, patch generation, temp-clone verification, GitHub PR | Implemented locally; hosted PR-opening proof still pending | Commits `69c1f75` through `2f72925`; worker/API tests; hosted `GET /reports/:id/autofix` returns stored Person B result slot | Run hosted `POST /reports/:id/autofix` with target repo and GitHub credentials configured |
 
 ## Person B Start Packet
 
 Person B should be able to start with only:
 
 ```text
-reportId: bug_234d5d51-b5a4-4395-9031-5016dd446a1b
+reportId: bug_a14c55c4-8b49-4a53-991d-e2e787490eaa
 repo: ibrolord/lite-annotate-demo
-normalized report JSON: GET /reports/bug_234d5d51-b5a4-4395-9031-5016dd446a1b
-memory search result: GET /reports/bug_234d5d51-b5a4-4395-9031-5016dd446a1b/memory
-handoff payload: GET /reports/bug_234d5d51-b5a4-4395-9031-5016dd446a1b/handoff
-autofix result: GET /reports/bug_234d5d51-b5a4-4395-9031-5016dd446a1b/autofix
-autofix trigger: POST /reports/bug_234d5d51-b5a4-4395-9031-5016dd446a1b/autofix
+normalized report JSON: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa
+memory search result: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/memory
+handoff payload: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/handoff
+autofix result: GET /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/autofix
+autofix trigger: POST /reports/bug_a14c55c4-8b49-4a53-991d-e2e787490eaa/autofix
 dashboard: https://lite-annotate-production.up.railway.app/reports/dashboard
 ```
 
@@ -54,6 +54,8 @@ Update this table on every repo commit that changes the demo, contract, capture 
 | `365b13c` | Person A / Deploy | Added Railway runtime start script | Done | Railway runtime could start with `tsx` dependency |
 | `719d009` | Person A / Visibility | Added reports dashboard | Done | Hosted dashboard smoke passed with report `bug_234d5d51-b5a4-4395-9031-5016dd446a1b` |
 | `f100e4e` | Shared / Tracker | Added Person A and B tracker | Done | `docs/TRACKER.md` linked from README |
+| `55744ff` | Shared / Merge prep | Merged current master into Person A tracker branch | Done | Resolved Person A dashboard with Person B API conflicts |
+| `6b70a72` | Shared / Merge | Merged PR #1 into `master` | Done | Main includes Person A capture/dashboard, Person B pipeline/API, and tracker |
 
 ## Gates
 
