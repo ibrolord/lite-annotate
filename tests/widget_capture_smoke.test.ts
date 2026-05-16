@@ -121,6 +121,40 @@ test('widget can cancel annotation mode before submitting', async () => {
   assert.equal(submitted[0].annotation.selector, undefined);
 });
 
+test('widget prepares html2canvas clones for modern CSS screenshots', async () => {
+  const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
+  const submitted: any[] = [];
+  const context = createBrowserContext(submitted);
+  let cloneCss = '';
+
+  vm.runInNewContext(script, context);
+  context.window.html2canvas = async (_element: unknown, options: { onclone?: Function }) => {
+    assert.equal(typeof options.onclone, 'function');
+    const clone = new FakeDocument();
+    options.onclone?.(clone);
+    cloneCss = clone.head.children.map((child) => child.textContent).join('\n');
+    return {
+      toDataURL: () => 'data:image/png;base64,real-screenshot-payload',
+    };
+  };
+
+  const launcher = context.document.body.children.find((child: any) => child.getAttribute('data-lite-annotate-launcher') === 'true');
+  assert.ok(launcher);
+  await launcher.dispatchEvent({ type: 'click', target: launcher });
+
+  const popover = context.document.body.children.find((child: any) => child !== launcher);
+  assert.equal(popover.getAttribute('data-lite-annotate-popover'), 'true');
+  const titleInput = popover.children.find((child: any) => child.tagName === 'INPUT');
+  const submit = popover.children.find((child: any) => child.textContent === 'Submit Report');
+  titleInput.value = 'Screenshot capture report';
+  await submit.dispatchEvent({ type: 'click', target: submit });
+
+  assert.match(cloneCss, /--accent:#2563eb/);
+  assert.match(cloneCss, /data-lite-annotate-popover/);
+  assert.equal(submitted[0].screenshot.type, 'data-url-or-url');
+  assert.match(submitted[0].screenshot.value, /^data:image\/png/);
+});
+
 test('widget clears an already pinned annotation with Escape', async () => {
   const script = await readFile(new URL('../widget/index.js', import.meta.url), 'utf8');
   const submitted: any[] = [];
@@ -289,6 +323,7 @@ function fakeTarget(tagName: string, text: string, id = '') {
 }
 
 class FakeDocument {
+  head = new FakeElement('head');
   documentElement = new FakeElement('html');
   body = new FakeElement('body');
   listeners = new Map<string, Function[]>();

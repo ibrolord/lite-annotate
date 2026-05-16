@@ -256,6 +256,7 @@
       'pointer-events:none',
     ].join(';'));
     annotationMarker.textContent = '1';
+    annotationMarker.setAttribute('data-lite-annotate-marker', 'true');
     document.body.appendChild(annotationMarker);
 
     if (annotation.elementRect) {
@@ -271,6 +272,7 @@
         'box-shadow:0 0 0 3px oklch(0.52 0.19 28 / .14)',
         'pointer-events:none',
       ].join(';'));
+      annotationHighlight.setAttribute('data-lite-annotate-highlight', 'true');
       document.body.appendChild(annotationHighlight);
     }
   }
@@ -329,6 +331,7 @@
       'pointer-events:none',
     ].join(';'));
     banner.textContent = 'Click anywhere to pin this bug. Press Esc to cancel.';
+    banner.setAttribute('data-lite-annotate-banner', 'true');
     document.body.appendChild(banner);
 
     let done = false;
@@ -385,7 +388,11 @@
       return { type: 'failure', reason: 'html2canvas_unavailable' };
     }
     try {
-      const canvas = await window.html2canvas(document.body, { useCORS: true, logging: false });
+      const canvas = await window.html2canvas(document.body, {
+        useCORS: true,
+        logging: false,
+        onclone: prepareScreenshotClone,
+      });
       return { type: 'data-url-or-url', value: canvas.toDataURL('image/png') };
     } catch (err) {
       return {
@@ -393,6 +400,36 @@
         reason: err instanceof Error ? err.message : 'screenshot_failed',
       };
     }
+  }
+
+  function prepareScreenshotClone(cloneDoc) {
+    const style = cloneDoc.createElement && cloneDoc.createElement('style');
+    if (!style) return;
+    style.textContent = [
+      ':root {',
+      '  --ink:#111827 !important;',
+      '  --muted:#4b5563 !important;',
+      '  --canvas:#f8fafc !important;',
+      '  --panel:#ffffff !important;',
+      '  --line:#d1d5db !important;',
+      '  --soft:#f3f4f6 !important;',
+      '  --accent:#2563eb !important;',
+      '  --accent-ink:#ffffff !important;',
+      '  --danger:#dc2626 !important;',
+      '  --success:#059669 !important;',
+      '  --code:#111827 !important;',
+      '  --code-text:#e5e7eb !important;',
+      '}',
+      'body { background:#f8fafc !important; color:#111827 !important; }',
+      '* { box-shadow:none !important; text-shadow:none !important; }',
+      '[data-lite-annotate-launcher],',
+      '[data-lite-annotate-popover],',
+      '[data-lite-annotate-marker],',
+      '[data-lite-annotate-highlight],',
+      '[data-lite-annotate-banner] { display:none !important; }',
+    ].join('\n');
+    const target = cloneDoc.head || cloneDoc.documentElement || cloneDoc.body;
+    if (target && target.appendChild) target.appendChild(style);
   }
 
   async function buildPayload(title, description) {
@@ -452,6 +489,7 @@
         'box-shadow:0 18px 40px oklch(0.31 0.03 248 / .16)',
         'font-family:system-ui,sans-serif', 'color:oklch(0.21 0.018 248)',
       ].join(';'));
+      popover.setAttribute('data-lite-annotate-popover', 'true');
 
       const heading = el('div', 'font-weight:700;font-size:15px;margin-bottom:6px;');
       heading.textContent = 'Report a bug';
