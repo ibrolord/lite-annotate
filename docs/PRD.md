@@ -102,7 +102,7 @@ The app user experiences a bug and needs a low-friction way to report it from in
 2. GBrain memory entry is created.
 3. Worker retrieves similar prior bugs.
 4. Worker retrieves/ranks repo context.
-5. GStack-style investigation produces diagnosis.
+5. Worker produces a diagnosis with Lite Annotate review evidence.
 6. If confidence is high, worker generates a patch, verifies it, and opens a PR.
 7. Diagnosis and PR outcome are written back to memory.
 
@@ -359,17 +359,34 @@ with Supabase/Postgres, not PGLite.
 
 ## GStack Usage
 
-Use GStack as the engineering workflow layer:
+Use GStack as an optional AI-engineering workflow for the team and as an optional remote review runner:
 
 ```text
 investigate -> review -> QA -> ship
 ```
 
-In the current implementation, GStack can be:
+The product must not require GStack to complete the core flow. When GStack review is requested from the product, Lite Annotate calls a separate GStack Runner API that owns Claude Code + GStack execution:
+
+```text
+Lite Annotate -> GStack Runner API -> Claude Code headless + GStack -> callback evidence
+```
+
+GStack is valuable here for:
+
+- Product and engineering planning before the worker changes.
+- Review and QA of the worker, dashboard, and PR flow.
+- Shipping discipline: tests, docs, PR body, and release checks.
+- Optional team-mode setup so collaborators run the same workflow.
+- Product-visible review evidence only when the remote runner actually used GStack.
+
+For the hackathon, GStack can be:
 
 - The workflow used by the team to build/review/ship.
-- The visible framing for the review worker.
-- A deeper hosted invocation only if the core capture and diagnosis loop is stable.
+- A manual or team-mode skill setup for Claude/Codex/OpenClaw.
+- A remote runner API documented in `docs/GSTACK_RUNNER.md`.
+- A source of review/QA evidence recorded in the tracker and report UI when used.
+
+Do not label Lite Annotate's runtime review evidence as GStack output unless a GStack command or skill actually produced it.
 
 ## Hosting Requirements
 
@@ -404,9 +421,9 @@ Recommended:
 Host as a separate service:
 
 - HTTP MCP server.
-- Supabase/Postgres database.
+- Postgres database; current hosted proof uses Railway Postgres.
 - OAuth client for `lite-annotate-worker`.
-- Embedding provider key.
+- Embedding provider key for semantic retrieval quality. The current hackathon proof works through native GBrain write/search without hosted embeddings.
 
 ## Security Requirements
 
@@ -496,7 +513,6 @@ For product direction:
 
 ## Open Questions
 
-- Which host should run the API/worker beyond the current demo deployment?
-- Which Postgres/Supabase project will host GBrain?
 - Which embedding provider key will be used?
-- Can hosted GStack invocation be made safe in time, or should it remain the workflow framing?
+- Should the protected GStack runner be deployed on a VM for the demo, or remain documented until a reviewer explicitly needs it?
+- Should this repo add optional team-mode GStack setup, or keep GStack as a manual developer workflow for the hackathon?

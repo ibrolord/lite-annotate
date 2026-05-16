@@ -49,6 +49,7 @@ The current implementation includes the end-to-end product loop:
 - Structured diagnosis, scoped patch generation, patch verification, and PR eligibility gates.
 - Dry-run analysis mode for safe demos and review.
 - Hosted PR-opening proof against the demo repo, recorded in [docs/TRACKER.md](docs/TRACKER.md).
+- Optional protected GStack runner API for remote review evidence.
 
 This is not production-hardened SaaS yet. Multi-tenant auth, billing, abuse controls, broad language support, and autonomous merge are intentionally outside the current boundary.
 
@@ -115,6 +116,7 @@ Internal planning history remains in:
 - [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md)
 - [docs/AGENT_EXECUTION_PLAN.md](docs/AGENT_EXECUTION_PLAN.md)
 - [docs/GBRAIN_VALIDATION.md](docs/GBRAIN_VALIDATION.md)
+- [docs/GSTACK_RUNNER.md](docs/GSTACK_RUNNER.md)
 
 ## Safety Model
 

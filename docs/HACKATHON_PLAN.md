@@ -2,7 +2,7 @@
 
 ## One-line Pitch
 
-Lite Annotate turns customer bug reports into engineering memory, then uses a GStack-powered worker to review the report, find the likely code path, and open a fix PR.
+Lite Annotate turns customer bug reports into engineering memory, then uses a gated review worker to diagnose the report, find the likely code path, and open a fix PR when safe. GStack is an optional AI-engineering workflow for planning, reviewing, QAing, and shipping the project work around that worker.
 
 ## Product Shape
 
@@ -15,7 +15,6 @@ Customer app
   -> report store
   -> GBrain memory
   -> code-context worker
-  -> GStack-powered review workflow
   -> engineering diagnosis
   -> optional GitHub PR
 ```
@@ -38,7 +37,7 @@ The validation also showed these limits:
 - Embeddings did not run without an embedding provider key.
 - `code_def` did not reliably find JavaScript function definitions in the demo repo.
 - PGLite is fine for local validation, but it is not the right shared hosted backend because the local DB lock can block concurrent CLI/admin operations.
-- Hosted deployment still needs Railway/Render auth, a Postgres/Supabase database, and embedding provider env vars.
+- Hosted native GBrain is now running on Railway Postgres. The remaining GBrain gap is semantic retrieval quality without an embedding provider key.
 
 See [GBRAIN_VALIDATION.md](GBRAIN_VALIDATION.md) for details.
 
@@ -85,25 +84,37 @@ If using the fallback, describe it as GBrain-compatible memory, not full native 
 
 ## What GStack Does
 
-GStack is the engineering workflow layer.
+GStack is an optional AI-engineering workflow and skill pack. It is not a hosted SaaS API by itself, so Lite Annotate uses it through a separate GStack Runner server when real product-side GStack review is needed. The core demo should still work without that runner configured.
 
-Minimum honest use:
-
-```text
-Use GStack to plan, review, QA, and ship the hackathon project.
-```
-
-Stronger product use:
+Use GStack around project work when its slash-command workflows add useful discipline:
 
 ```text
-feedback submitted
-  -> GStack-style investigate workflow
-  -> diagnosis
-  -> review
-  -> optional ship / PR
+/office-hours or /autoplan
+  -> /plan-eng-review
+  -> implement the worker change
+  -> /review
+  -> /qa
+  -> /ship
 ```
 
-Do not block the core demo on non-interactive hosted GStack invocation unless the capture loop is already stable.
+What GStack is great for here:
+
+- Forcing product and engineering assumptions into the open before implementation.
+- Reviewing the worker code and PR for bugs, architecture, and completeness.
+- Running browser QA against the hosted dashboard or demo app.
+- Shipping the PR with tests, docs, and release notes kept in sync.
+
+High-fidelity, uncomplicated use in this repo:
+
+```text
+report needs external GStack review
+  -> Lite Annotate POST /reports/:id/gstack-review
+  -> remote GStack Runner API
+  -> Claude Code headless with GStack installed
+  -> callback stores GStack evidence on the report
+```
+
+Do not present Lite Annotate's own worker trace as "GStack" unless the remote runner actually used GStack commands or skills. The product UI can still show an "Engineering Review" trace for the worker, but that is Lite Annotate's artifact, not GStack evidence.
 
 ## Code Understanding Strategy
 
@@ -124,7 +135,7 @@ The reliable product boundary is:
 GBrain = memory + retrieval
 GitHub/source clone = source of truth for file contents
 Worker index = fallback ranking and code map
-GStack workflow = investigate/review/ship process
+GStack workflow = optional developer/agent process for plan/review/QA/ship
 Claude = diagnosis and patch generation
 ```
 
@@ -270,7 +281,7 @@ API and worker
   -> Railway or Render
 
 Memory
-  -> native GBrain with Supabase/Postgres if stable
+  -> native GBrain on Railway Postgres
   -> GitHub markdown fallback if time constrained
 
 Code and PRs
@@ -285,7 +296,7 @@ Hosted GBrain should run as a separate service:
 gbrain serve --http --bind 0.0.0.0 --port $PORT --public-url <hosted-url>
 ```
 
-Use Supabase/Postgres for hosted GBrain. Use PGLite only for local development.
+Use Railway Postgres for the current hosted GBrain. Use PGLite only for local development.
 
 ## Phase Plan
 
@@ -372,13 +383,9 @@ Report submitted -> scoped patch passes checks locally -> PR opens with verifica
 
 ## Open Questions
 
-- Are hackathon judges requiring native GBrain usage, or is GBrain-compatible memory acceptable?
-- Can hosted GStack be invoked safely, or should GStack be framed as the workflow used to build/review/ship?
-- Which hosting path is fastest today: Railway, Render, or Fly.io?
+- Should this repo add optional team-mode GStack setup, or keep GStack as a manual developer workflow for the hackathon?
 - Should code access use a GitHub App or a personal token for the prototype?
 - Which embedding provider key will be used for hosted GBrain?
-- Will hosted GBrain run on Supabase Postgres or another Postgres provider?
-- Should the first hosted demo use native GBrain MCP or the CLI bridge from the worker?
 
 ## Collaboration Tasks
 

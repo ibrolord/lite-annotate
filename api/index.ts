@@ -6,6 +6,13 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMemoryAdapter, type MemoryAdapter, type MemorySearchResult } from './gbrain.js';
+import {
+  createRemoteGStackReview,
+  requireInternalToken,
+  type GStackJobMode,
+  type GStackReviewResult,
+  type StoredGStackReviewRecord,
+} from './gstack_runner.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
 import type { LiteReport } from './report_contract.js';
@@ -151,7 +158,8 @@ export function createApp(deps: {
       memoryImpact,
       agentComparison,
       memoryReceipts,
-      record.autofix ?? null
+      record.autofix ?? null,
+      record.gstackReview ?? null
     ));
   });
 
@@ -159,6 +167,100 @@ export function createApp(deps: {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
     return c.json({ reportId: record.report.id, autofix: record.autofix ?? null });
+  });
+
+  app.get('/reports/:id/gstack-review', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    return c.json({ reportId: record.report.id, gstackReview: record.gstackReview ?? null });
+  });
+
+  app.post('/reports/:id/gstack-review', async (c) => {
+    const auth = requireConfiguredBearer(c.req.raw, 'GSTACK_TRIGGER_TOKEN');
+    if (!auth.ok) return c.json({ error: auth.error, message: auth.message }, auth.status);
+
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    let body: Record<string, unknown> = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+
+    const mode = parseGStackMode(body.mode);
+    if (body.allowPr === true && process.env.GSTACK_ALLOW_PR !== '1') {
+      return c.json({ error: 'pr_not_allowed', message: 'GSTACK_ALLOW_PR=1 is required before remote GStack jobs may open PRs' }, 403);
+    }
+    const allowPr = body.allowPr === true;
+    const publicBaseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
+    const callbackBaseUrl = process.env.GSTACK_CALLBACK_BASE_URL?.replace(/\/+$/, '') ?? publicBaseUrl;
+    if (!callbackBaseUrl) {
+      return c.json({ error: 'gstack_not_configured', message: 'PUBLIC_BASE_URL or GSTACK_CALLBACK_BASE_URL is required' }, 503);
+    }
+
+    try {
+      const job = await createRemoteGStackReview({
+        reportId: record.report.id,
+        repo: record.report.repo,
+        mode,
+        allowPr,
+        report: record.report,
+        reportUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}` : undefined,
+        memoryUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/memory` : undefined,
+        handoffUrl: publicBaseUrl ? `${publicBaseUrl}/reports/${encodeURIComponent(record.report.id)}/handoff` : undefined,
+        callbackUrl: `${callbackBaseUrl}/internal/gstack-callback`,
+      });
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        gstackReview: mergeQueuedGStackReview(current.gstackReview, job),
+        updatedAt: new Date().toISOString(),
+      }));
+      return c.json({ reportId: record.report.id, gstackReview: updated?.gstackReview ?? job }, 202);
+    } catch (err) {
+      return c.json({ error: 'gstack_job_failed', message: errorMessage(err) }, 502);
+    }
+  });
+
+  app.post('/internal/gstack-callback', async (c) => {
+    try {
+      requireInternalToken(c.req.raw);
+    } catch (err) {
+      return c.json({ error: 'unauthorized', message: errorMessage(err) }, 401);
+    }
+
+    let result: GStackReviewResult;
+    try {
+      result = sanitizeGStackResult(await c.req.json() as GStackReviewResult);
+    } catch {
+      return c.json({ error: 'invalid_json', message: 'body must be valid JSON' }, 400);
+    }
+    if (!result.reportId || !result.jobId) {
+      return c.json({ error: 'invalid_gstack_result', message: 'reportId and jobId are required' }, 400);
+    }
+
+    const record = await store.get(result.reportId);
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    if (record.gstackReview?.jobId && record.gstackReview.jobId !== result.jobId) {
+      return c.json({ error: 'job_mismatch' }, 409);
+    }
+
+    const updated = await store.update(result.reportId, (current) => ({
+      ...current,
+      gstackReview: {
+        jobId: result.jobId,
+        reportId: result.reportId,
+        status: result.status,
+        mode: current.gstackReview?.mode ?? 'review_fix',
+        runnerUrl: current.gstackReview?.runnerUrl,
+        createdAt: current.gstackReview?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        result,
+      },
+      updatedAt: new Date().toISOString(),
+    }));
+    return c.json({ ok: true, gstackReview: updated?.gstackReview });
   });
 
   app.post('/reports/:id/autofix', async (c) => {
@@ -230,7 +332,7 @@ export const app = createApp();
 function renderReportsDashboard(records: StoredReportRecord[]): string {
   const rows = records.map((record) => renderReportRow(record)).join('');
   const empty = records.length === 0
-    ? '<tr><td colspan="8" class="empty">No reports captured yet. Submit one from <a href="/demo">the demo</a>.</td></tr>'
+    ? '<tr><td colspan="9" class="empty">No reports captured yet. Submit one from <a href="/demo">the demo</a>.</td></tr>'
     : '';
   const readyCount = records.filter((record) => record.memory).length;
   const analyzedCount = records.filter((record) => record.autofix).length;
@@ -316,6 +418,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
             <th>Context</th>
             <th>Memory</th>
             <th>Analysis</th>
+            <th>GStack</th>
             <th>Links</th>
           </tr>
         </thead>
@@ -355,6 +458,7 @@ function renderReportRow(record: StoredReportRecord): string {
     <td>${escapeHtml(context)}</td>
     <td><span class="${memory.ok ? 'pill' : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
     <td><span class="pill">${escapeHtml(analysisStatus(record.autofix))}</span></td>
+    <td><span class="pill">${escapeHtml(gstackStatus(record.gstackReview))}</span></td>
     <td>
       <div class="links">
         <a href="/reports/${encodeURIComponent(report.id)}/view">Open report</a>
@@ -403,7 +507,8 @@ function renderReportHtml(
   memoryImpact: MemoryImpactSummary,
   agentComparison: AgentComparison,
   memoryReceipts: MemoryReceipt[],
-  autofix: unknown
+  autofix: unknown,
+  gstackReview: unknown
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -674,6 +779,15 @@ function renderReportHtml(
           </div>
           <div class="analysis-body">
             <pre>${escapeHtml(JSON.stringify(autofix, null, 2))}</pre>
+          </div>
+        </section>
+        <section class="surface">
+          <div class="surface-head">
+            <h2>GStack Review</h2>
+            <span class="status-pill">${escapeHtml(gstackStatus(gstackReview))}</span>
+          </div>
+          <div class="analysis-body">
+            <pre>${escapeHtml(JSON.stringify(gstackReview, null, 2))}</pre>
           </div>
         </section>
       </aside>
@@ -1010,6 +1124,47 @@ function analysisStatus(autofix: unknown): string {
   if (!autofix || typeof autofix !== 'object') return 'not run';
   const status = (autofix as { status?: unknown }).status;
   return typeof status === 'string' ? status : 'recorded';
+}
+
+function gstackStatus(gstackReview: unknown): string {
+  if (!gstackReview || typeof gstackReview !== 'object') return 'not run';
+  const status = (gstackReview as { status?: unknown }).status;
+  return typeof status === 'string' ? status : 'recorded';
+}
+
+function parseGStackMode(value: unknown): GStackJobMode {
+  if (value === 'investigate' || value === 'qa' || value === 'ship') return value;
+  return 'review_fix';
+}
+
+function requireConfiguredBearer(
+  request: Request,
+  envName: string
+): { ok: true } | { ok: false; status: 401 | 503; error: string; message: string } {
+  const expected = process.env[envName];
+  if (!expected) return { ok: true };
+  const actual = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+  if (actual !== expected) {
+    return { ok: false, status: 401, error: 'unauthorized', message: 'invalid internal token' };
+  }
+  return { ok: true };
+}
+
+function mergeQueuedGStackReview(
+  existing: StoredGStackReviewRecord | undefined,
+  queued: StoredGStackReviewRecord
+): StoredGStackReviewRecord {
+  if (existing?.jobId === queued.jobId && isTerminalGStackReview(existing)) return existing;
+  return queued;
+}
+
+function isTerminalGStackReview(review: StoredGStackReviewRecord): boolean {
+  return Boolean(review.result) || review.status === 'passed' || review.status === 'failed' || review.status === 'blocked';
+}
+
+function sanitizeGStackResult(result: GStackReviewResult): GStackReviewResult {
+  const { logs: _logs, ...safeResult } = result;
+  return safeResult;
 }
 
 interface StoredAutofixSummary extends Record<string, unknown> {

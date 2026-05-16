@@ -220,23 +220,65 @@ railway status
 Result:
 
 ```text
-BLOCKED: Railway auth refresh failed with invalid_grant.
-BLOCKED: No linked Railway project found.
+PASS: Railway project `lite-annotate` is linked and authenticated.
+PASS: GBrain is deployed as service `36bc49fe-6c1c-40b1-a34e-a752b2173934`.
+PASS: GBrain uses Railway Postgres service `71fac79d-d73a-4fd8-a2a7-dbc55857547b`.
+PASS: Lite Annotate is deployed as service `f314acf1-0e46-49a5-a107-9b57d016ae49`.
 ```
 
 Environment check:
 
 ```text
-No DATABASE_URL found.
-No SUPABASE env found.
-No OPENAI_API_KEY found in the shell.
-No GBRAIN env found.
+PASS: GBrain has DATABASE_URL pointing to Railway Postgres.
+PASS: Lite Annotate has MEMORY_PROVIDER=gbrain.
+PASS: Lite Annotate has GBRAIN_MCP_URL=https://gbrain-production-9170.up.railway.app/mcp.
+PASS: Lite Annotate has OAuth client credentials for the `lite-annotate-worker` client.
+PASS: Lite Annotate has REPORT_STORE_DIR=/data/reports on a Railway volume.
+NOTE: No embedding provider key was configured for hosted semantic embeddings.
 ```
 
 Conclusion:
 
 ```text
-Hosted GBrain is feasible, but not validated yet from this machine.
+Hosted native GBrain is validated for report, diagnosis, outcome, and search memory.
+Search proof is keyword/native GBrain search plus Lite Annotate searchSimilar.
+Full semantic retrieval quality still depends on adding an embedding provider key.
+```
+
+Hosted services:
+
+```text
+GBrain URL: https://gbrain-production-9170.up.railway.app
+GBrain deployment: 90a86f74-48fd-43b5-b1c4-aec47372e6a8
+Lite Annotate URL: https://lite-annotate-production.up.railway.app
+Lite Annotate deployment: 9fa70a1f-2f32-4c89-bb60-484983efa6de
+Lite Annotate report volume: 8e7c3c68-5da5-4004-905b-b19e125a0c2e mounted at /data
+```
+
+Hosted smoke reports:
+
+```text
+API fixture smoke: bug_81e3cf24-7343-4081-a618-c9a8372f7187
+Hosted widget smoke: bug_59d14766-d51a-4c84-917a-146ffa4e7d1e
+```
+
+Hosted validation results:
+
+```text
+PASS: GET /health returns ok for Lite Annotate.
+PASS: GET /health returns ok/version 0.35.1.0/engine postgres for GBrain.
+PASS: GBrain OAuth metadata is available.
+PASS: POST /report from hosted fixture returned provider=gbrain status=written.
+PASS: GET /reports/:id returned full normalized report context.
+PASS: GET /reports/:id/raw returned raw payload and gbrain memory receipt.
+PASS: GET /reports/:id/memory returned provider=gbrain and a similar prior bug.
+PASS: GET /reports/:id/handoff returned repo, normalized report JSON, memory search result, receipts, and agent comparison.
+PASS: Direct `gbrain search` found the hosted report by title.
+PASS: POST /reports/:id/diagnosis returned provider=gbrain status=written.
+PASS: POST /reports/:id/outcome returned provider=gbrain status=written.
+PASS: Direct `gbrain search` found the hosted diagnosis and outcome pages.
+PASS: Restarted Lite Annotate and retrieved the same hosted report from the /data volume.
+PASS: Browser smoke submitted a report through the hosted widget and dashboard showed annotation, console, network, session, screenshot, memory, and handoff context.
 ```
 
 ## Revised Product Boundary
@@ -278,9 +320,17 @@ Customer app
   -> hosted GBrain HTTP MCP
   -> Supabase/Postgres
   -> GitHub source files
-  -> GStack-style investigate/review workflow
   -> diagnosis
   -> optional PR
+```
+
+Optional GStack review runs through a separate VM-hosted runner:
+
+```text
+Lite Annotate API
+  -> GStack Runner API
+  -> Claude Code headless with GStack installed
+  -> authenticated callback with review evidence
 ```
 
 ## Lite Annotate Adapter Status
@@ -304,24 +354,9 @@ GBrain call fails.
 
 ## Next Validation Needed
 
-Before betting the live demo on hosted native GBrain:
+Before improving retrieval quality beyond the hackathon proof:
 
-1. Re-auth Railway or choose Render/Fly.
-2. Provision Supabase/Postgres.
-3. Set an embedding provider key.
-4. Run hosted:
-
-```bash
-gbrain serve --http --bind 0.0.0.0 --port $PORT --public-url <hosted-url>
-```
-
-5. Register a `lite-annotate-worker` OAuth client.
-6. From Lite Annotate worker, call:
-
-```text
-put_page
-search
-code_refs
-```
-
-7. Confirm one hosted bug report can retrieve prior memory and code context.
+1. Add an embedding provider key to hosted GBrain.
+2. Re-run direct report, diagnosis, outcome, and search validation.
+3. Add hosted repo/code source sync if Person B should query GBrain code refs remotely.
+4. Keep worker-side repo clone/index as the source-of-truth code path until GBrain code-def behavior is reliable for the demo repo.

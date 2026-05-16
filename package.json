@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx api/index.ts",
+    "gstack:runner": "tsx gstack-runner/server.ts",
     "start": "tsx api/index.ts",
     "test": "tsx --test \"tests/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --noEmit"

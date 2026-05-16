@@ -12,6 +12,7 @@
   },
   "include": [
     "api/**/*.ts",
+    "gstack-runner/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": [

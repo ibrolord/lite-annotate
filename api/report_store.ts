@@ -1,12 +1,14 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LiteReport } from './report_contract.js';
+import type { StoredGStackReviewRecord } from './gstack_runner.js';
 
 export interface StoredReportRecord {
   report: LiteReport;
   raw: unknown;
   memory?: unknown;
   autofix?: StoredAutofixRecord;
+  gstackReview?: StoredGStackReviewRecord;
   updatedAt: string;
 }
 
@@ -15,6 +17,8 @@ export interface StoredAutofixRecord extends Record<string, unknown> {
 }
 
 export class ReportStore {
+  private readonly updateQueues = new Map<string, Promise<unknown>>();
+
   constructor(private readonly rootDir = defaultReportStoreDir()) {}
 
   async put(record: StoredReportRecord): Promise<void> {
@@ -32,12 +36,27 @@ export class ReportStore {
     }
   }
 
-  async update(reportId: string, update: (record: StoredReportRecord) => StoredReportRecord): Promise<StoredReportRecord | null> {
-    const record = await this.get(reportId);
-    if (!record) return null;
-    const next = update(record);
-    await this.put(next);
-    return next;
+  async update(
+    reportId: string,
+    update: (record: StoredReportRecord) => StoredReportRecord | Promise<StoredReportRecord>
+  ): Promise<StoredReportRecord | null> {
+    const queueKey = safeReportId(reportId);
+    const previous = this.updateQueues.get(queueKey) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(async () => {
+      const record = await this.get(reportId);
+      if (!record) return null;
+      const updated = await update(record);
+      await this.put(updated);
+      return updated;
+    });
+    this.updateQueues.set(queueKey, next);
+    try {
+      return await next;
+    } finally {
+      if (this.updateQueues.get(queueKey) === next) {
+        this.updateQueues.delete(queueKey);
+      }
+    }
   }
 
   async list(): Promise<LiteReport[]> {
