@@ -351,10 +351,10 @@
     };
 
     cancelAnnotationMode = cleanup;
+    window.addEventListener?.('keydown', handleKeydown, true);
     setTimeout(() => {
       if (done) return;
       document.addEventListener('click', finish, true);
-      window.addEventListener?.('keydown', handleKeydown, true);
     }, 0);
   }
 

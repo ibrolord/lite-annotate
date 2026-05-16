@@ -81,7 +81,6 @@ test('widget can cancel annotation mode before submitting', async () => {
 
   titleInput.value = 'Cancelled annotation report';
   await annotate.dispatchEvent({ type: 'click', target: annotate });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(cancel.disabled, false);
   assert.equal(cancel.style.display, 'block');
 
@@ -94,6 +93,7 @@ test('widget can cancel annotation mode before submitting', async () => {
   assert.equal(cancel.disabled, true);
   assert.equal(cancel.style.display, 'none');
   assert.equal(annotationStatus.textContent, 'Annotation cancelled.');
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   await annotate.dispatchEvent({ type: 'click', target: annotate });
   await new Promise((resolve) => setTimeout(resolve, 0));
