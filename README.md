@@ -7,13 +7,36 @@ A small browser widget captures the user's report together with the technical co
 The backend stores each report as durable engineering memory, retrieves related prior context, runs repo-aware diagnosis, generates a scoped patch when the evidence supports it, verifies the patch locally, and can open a guarded GitHub pull request.
 
 ```text
-user report
-  -> browser evidence
-  -> durable memory
-  -> repo-aware diagnosis
-  -> scoped patch
-  -> local verification
-  -> guarded pull request
++----------------------+
+| Customer app         |
+| script-tag widget    |
++----------+-----------+
+           |
+           | captured report
+           v
++------------------------------+
+| Lite Annotate                |
+| intake | review UI | worker |
++------+-----------+-----------+
+       |           |
+       |           +----------------------+
+       |                                  |
+       v                                  v
++----------------------+        +----------------------+
+| GBrain memory        |        | Target GitHub repo   |
+| reports              |        | repo context         |
+| diagnoses            |        | scoped patches       |
+| outcomes             |        | guarded PRs          |
++----------------------+        +----------------------+
+
+Optional from the report view:
+
++----------------------+
+| GStack runner        |
+| investigation        |
+| QA, review, ship     |
+| callback results     |
++----------------------+
 ```
 
 ## Why It Exists
@@ -57,44 +80,6 @@ Repo-aware analysis is the next step:
 3. Use `POST /reports/:id/autofix` for the full gated PR path.
 
 Dry-run analysis is the default review path. It exercises diagnosis and verification without opening a public branch or pull request.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  subgraph App[Customer app]
-    User[User]
-    Widget[Lite Annotate widget<br/>script tag]
-  end
-
-  subgraph Core[Lite Annotate]
-    API[API<br/>report intake and review routes]
-    Store[(Report store)]
-    Review[Review UI<br/>dashboard and report view]
-    Worker[Autofix worker<br/>diagnosis, patch, verification]
-  end
-
-  Repo[(Target GitHub repo)]
-  GBrain[(GBrain-compatible memory<br/>reports, diagnoses, outcomes)]
-  GitHub[GitHub<br/>guarded pull request]
-  GStack[GStack runner<br/>optional investigation, QA, review, ship]
-
-  User --> Widget
-  Widget -->|captured report| API
-  API --> Store
-  API -->|write report memory| GBrain
-  Store --> Review
-  Review -->|dry run or autofix| Worker
-  Worker -->|read repo context| Repo
-  Worker -->|retrieve prior memory| GBrain
-  Worker -->|write diagnosis and outcome| GBrain
-  Worker -->|verified patch| GitHub
-  Review -->|protected trigger| GStack
-  GStack -->|fetch report, memory, handoff| API
-  GStack -->|callback result| API
-```
-
-The capture path only needs the widget and Lite Annotate API. GBrain adds durable report, diagnosis, and outcome memory. GStack is optional; it runs protected investigation or review jobs from the report page and returns structured results through the callback path.
 
 ## Product Surface
 
