@@ -88,24 +88,28 @@ test('POST /reports/:id/triage stores and exposes report triage', async () => {
   process.env.MEMORY_DIR = join(root, 'memory');
   process.env.MEMORY_PROVIDER = 'github-markdown';
   const store = new ReportStore(join(root, 'reports'));
+  let triageRuns = 0;
   const app = createApp({
     store,
     memory: createMemoryAdapter(),
-    triageRunner: async (report) => ({
-      verdict: 'real_bug',
-      confidence: 'high',
-      isRealBug: true,
-      userSummary: 'The user says clicking Load User Profile crashes the users page.',
-      agentReport: 'The captured report includes a browser error on /users, so Lite Annotate should treat this as a real bug and move to Auto-Fix.',
-      headline: 'Captured runtime evidence supports a real bug',
-      rationale: `The report has a browser error on ${report.route}.`,
-      evidence: ["Console error: Cannot read properties of undefined reading 'name'", 'Route: /users'],
-      nextAction: 'run_autofix',
-      source: 'llm',
-      model: 'test-fast-triage',
-      latencyMs: 12,
-      createdAt: '2026-05-16T12:00:00.000Z',
-    }),
+    triageRunner: async (report) => {
+      triageRuns += 1;
+      return {
+        verdict: 'real_bug',
+        confidence: 'high',
+        isRealBug: true,
+        userSummary: 'The user says clicking Load User Profile crashes the users page.',
+        agentReport: 'The captured report includes a browser error on /users, so Lite Annotate should treat this as a real bug and move to Auto-Fix.',
+        headline: `Captured runtime evidence supports a real bug ${triageRuns}`,
+        rationale: `The report has a browser error on ${report.route}.`,
+        evidence: ["Console error: Cannot read properties of undefined reading 'name'", 'Route: /users'],
+        nextAction: 'run_autofix',
+        source: 'llm',
+        model: `test-fast-triage-${triageRuns}`,
+        latencyMs: 12,
+        createdAt: '2026-05-16T12:00:00.000Z',
+      };
+    },
   });
 
   try {
@@ -118,9 +122,10 @@ test('POST /reports/:id/triage stores and exposes report triage', async () => {
 
     const viewBefore = await app.request(`/reports/${postBody.reportId}/view`);
     const viewBeforeHtml = await viewBefore.text();
-    assert.match(viewBeforeHtml, /Triage report/);
-    assert.match(viewBeforeHtml, /Report Triage/);
-    assert.match(viewBeforeHtml, /No triage run yet/);
+    assert.match(viewBeforeHtml, /Triage Report/);
+    assert.match(viewBeforeHtml, /Automatic triage is starting/);
+    assert.match(viewBeforeHtml, /data-auto-triage="true"/);
+    assert.match(viewBeforeHtml, /Start triage now/);
     assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/triage`));
 
     const triage = await app.request(`/reports/${postBody.reportId}/triage`, { method: 'POST' });
@@ -137,7 +142,9 @@ test('POST /reports/:id/triage stores and exposes report triage', async () => {
     const get = await app.request(`/reports/${postBody.reportId}/triage`);
     assert.equal(get.status, 200);
     const getBody = await get.json();
-    assert.equal(getBody.triage.model, 'test-fast-triage');
+    assert.equal(getBody.status, 'complete');
+    assert.equal(getBody.triage.model, 'test-fast-triage-1');
+    assert.equal(triageRuns, 1);
 
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     const handoffBody = await handoff.json();
@@ -156,8 +163,11 @@ test('POST /reports/:id/triage stores and exposes report triage', async () => {
     assert.match(viewAfterHtml, /Lite Annotate report/);
     assert.match(viewAfterHtml, /treat this as a real bug/);
     assert.match(viewAfterHtml, /Real bug/);
-    assert.match(viewAfterHtml, /test-fast-triage/);
+    assert.match(viewAfterHtml, /test-fast-triage-1/);
     assert.match(viewAfterHtml, /Console error: Cannot read properties/);
+    assert.match(viewAfterHtml, /Restart triage/);
+    assert.match(viewAfterHtml, /GStack Review/);
+    assert.match(viewAfterHtml, /Run GStack Review|GStack investigation is available through the protected API/);
 
     const htmlTriage = await app.request(`/reports/${postBody.reportId}/triage`, {
       method: 'POST',
@@ -168,6 +178,14 @@ test('POST /reports/:id/triage stores and exposes report triage', async () => {
       htmlTriage.headers.get('location'),
       `/reports/${postBody.reportId}/view#triage-result`
     );
+    assert.equal(triageRuns, 1);
+
+    const restart = await app.request(`/reports/${postBody.reportId}/triage?restart=1`, { method: 'POST' });
+    assert.equal(restart.status, 200);
+    const restartBody = await restart.json();
+    assert.equal(restartBody.restarted, true);
+    assert.equal(restartBody.triage.model, 'test-fast-triage-2');
+    assert.equal(triageRuns, 2);
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;

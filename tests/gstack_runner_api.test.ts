@@ -208,7 +208,7 @@ test('GStack investigation button redirects back to the report and shows queued 
     assert.match(initialHtml, /data-gstack-live/);
     assert.match(initialHtml, /data-gstack-src="\/reports\/[^"]+\/gstack\/investigation"/);
     assert.match(initialHtml, /data-gstack-form data-gstack-workflow="investigate"/);
-    assert.match(initialHtml, /<button class="quiet" type="submit">Investigate with GStack<\/button>/);
+    assert.match(initialHtml, /<button class="quiet" type="submit">Run GStack Review<\/button>/);
     assert.doesNotMatch(initialHtml, /GStack investigation is available through the protected API/);
     assert.doesNotMatch(initialHtml, /<button class="safe" type="submit">Investigate with GStack<\/button>/);
 
@@ -232,7 +232,7 @@ test('GStack investigation button redirects back to the report and shows queued 
     assert.match(html, /GStack investigation is queued/);
     assert.match(html, /gstack_job_ui_123/);
     assert.match(html, /Runner response/);
-    assert.doesNotMatch(html, /<button class="quiet" type="submit">Investigate with GStack<\/button>/);
+    assert.doesNotMatch(html, /<button class="quiet" type="submit">Run GStack Review<\/button>/);
     assert.match(html, /Wait for the runner callback/);
   } finally {
     globalThis.fetch = oldFetch;
