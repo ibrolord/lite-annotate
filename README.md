@@ -4,6 +4,10 @@
   </a>
 </p>
 
+<p align="center">
+  <strong><a href="https://lite-annotate-commerce-demo.vercel.app/">Try the live commerce demo</a></strong>
+</p>
+
 # Lite Annotate
 
 Lite Annotate turns in-product bug reports into engineering-ready work. Setup is one config block and one async script tag; no app package, framework adapter, build plugin, or SDK call is required for the capture path.
