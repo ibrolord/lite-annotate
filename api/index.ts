@@ -97,6 +97,60 @@ export function createApp(deps: {
       });
     });
   const triageRunner = deps.triageRunner ?? runReportTriage;
+  const activeTriageRuns = new Map<string, Promise<TriageRunResult>>();
+
+  function failedTriage(report: LiteReport, err: unknown): ReportTriage {
+    return {
+      verdict: 'needs_more_info',
+      confidence: 'low',
+      isRealBug: false,
+      userSummary: `${report.title}${report.description ? `: ${report.description}` : ''}`,
+      agentReport: 'Lite Annotate could not complete triage, so this report needs manual review before Auto-Fix.',
+      headline: 'Triage could not complete',
+      rationale: errorMessage(err),
+      evidence: ['The triage runner failed before returning a verdict.'],
+      nextAction: 'ask_reporter',
+      source: 'heuristic',
+      model: 'triage-runner',
+      latencyMs: 0,
+      createdAt: new Date().toISOString(),
+      error: errorMessage(err),
+    };
+  }
+
+  async function runAndStoreTriage(record: StoredReportRecord, force = false): Promise<TriageRunResult> {
+    const reportId = record.report.id;
+    if (record.triage && !force) return { triage: record.triage, failed: false, reused: true };
+
+    const active = activeTriageRuns.get(reportId);
+    if (active) return active;
+
+    let run: Promise<TriageRunResult>;
+    run = (async (): Promise<TriageRunResult> => {
+      try {
+        const triage = await triageRunner(record.report);
+        const updated = await store.update(reportId, (current) => ({
+          ...current,
+          triage,
+          updatedAt: new Date().toISOString(),
+        }));
+        return { triage: updated?.triage ?? triage, failed: false, reused: false };
+      } catch (err) {
+        const triage = failedTriage(record.report, err);
+        const updated = await store.update(reportId, (current) => ({
+          ...current,
+          triage,
+          updatedAt: new Date().toISOString(),
+        }));
+        return { triage: updated?.triage ?? triage, failed: true, reused: false };
+      } finally {
+        activeTriageRuns.delete(reportId);
+      }
+    })();
+
+    activeTriageRuns.set(reportId, run);
+    return run;
+  }
 
   app.use('*', cors());
 
@@ -249,6 +303,7 @@ export function createApp(deps: {
       agentComparison,
       memoryReceipts,
       record.triage ?? null,
+      activeTriageRuns.has(record.report.id),
       record.autofix ?? null,
       record.gstackReview ?? null
     ));
@@ -257,51 +312,32 @@ export function createApp(deps: {
   app.get('/reports/:id/triage', async (c) => {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
-    return c.json({ reportId: record.report.id, triage: record.triage ?? null });
+    return c.json({
+      reportId: record.report.id,
+      status: activeTriageRuns.has(record.report.id) ? 'running' : record.triage ? 'complete' : 'not_run',
+      triage: record.triage ?? null,
+    });
   });
 
   app.post('/reports/:id/triage', async (c) => {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
+    const restart = c.req.query('restart') === '1';
 
-    try {
-      const triage = await triageRunner(record.report);
-      const updated = await store.update(record.report.id, (current) => ({
-        ...current,
-        triage,
-        updatedAt: new Date().toISOString(),
-      }));
-      if (requestPrefersHtml(c.req.raw)) {
-        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
-      }
-      return c.json({ reportId: record.report.id, triage: updated?.triage ?? triage });
-    } catch (err) {
-      const triage: ReportTriage = {
-        verdict: 'needs_more_info',
-        confidence: 'low',
-        isRealBug: false,
-        userSummary: `${record.report.title}${record.report.description ? `: ${record.report.description}` : ''}`,
-        agentReport: 'Lite Annotate could not complete triage, so this report needs manual review before Auto-Fix.',
-        headline: 'Triage could not complete',
-        rationale: errorMessage(err),
-        evidence: ['The triage runner failed before returning a verdict.'],
-        nextAction: 'ask_reporter',
-        source: 'heuristic',
-        model: 'triage-runner',
-        latencyMs: 0,
-        createdAt: new Date().toISOString(),
-        error: errorMessage(err),
-      };
-      await store.update(record.report.id, (current) => ({
-        ...current,
-        triage,
-        updatedAt: new Date().toISOString(),
-      }));
-      if (requestPrefersHtml(c.req.raw)) {
-        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
-      }
-      return c.json({ reportId: record.report.id, triage }, 500);
+    const result = await runAndStoreTriage(record, restart);
+    if (requestPrefersHtml(c.req.raw)) {
+      return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
     }
+    return c.json(
+      {
+        reportId: record.report.id,
+        status: result.failed ? 'failed' : 'complete',
+        restarted: restart,
+        reused: result.reused,
+        triage: result.triage,
+      },
+      result.failed ? 500 : 200
+    );
   });
 
   app.get('/reports/:id/autofix', async (c) => {
@@ -915,6 +951,7 @@ function renderReportHtml(
   agentComparison: AgentComparison,
   memoryReceipts: MemoryReceipt[],
   triage: ReportTriage | null,
+  triageRunning: boolean,
   autofix: unknown,
   gstackReview: unknown
 ): string {
@@ -1061,6 +1098,15 @@ function renderReportHtml(
     .stack { display: grid; gap: 12px; min-width: 0; }
     .surface { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: 0 16px 34px oklch(0.42 0.04 248 / .07); }
     .surface-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .surface-head-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; align-items: center; }
+    .mini-action {
+      min-height: 32px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--ink);
+      font-size: 12px;
+    }
     .evidence-list, .safety-list { display: grid; }
     .evidence-row, .safety-row {
       display: grid;
@@ -1114,6 +1160,9 @@ function renderReportHtml(
     .result-item strong { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
     .analysis-body { padding: 14px 16px 16px; }
     .triage-callout { display: grid; gap: 10px; padding: 16px; }
+    .triage-state { display: grid; gap: 8px; padding: 16px; }
+    .triage-state strong { color: var(--ink); font-size: 16px; }
+    .triage-status-line { color: var(--muted); font-size: 13px; }
     .triage-copy { display: grid; gap: 6px; max-width: 82ch; }
     .triage-copy strong { font-size: 18px; line-height: 1.25; }
     .triage-metrics {
@@ -1326,6 +1375,24 @@ function renderReportHtml(
     .advanced-section { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
     .advanced-section:first-child { border-top: 0; padding-top: 0; }
     .advanced-section h2 { font-size: 16px; }
+    .triage-gstack-panel {
+      display: grid;
+      gap: 12px;
+      margin: 0 16px 16px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: oklch(0.988 0.006 248);
+    }
+    .triage-gstack-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .triage-gstack-copy { display: grid; gap: 5px; }
+    .triage-gstack-copy strong { font-size: 15px; line-height: 1.35; }
     .investigation-summary { display: grid; gap: 12px; padding: 14px 16px 16px; }
     .investigation-summary strong { display: block; line-height: 1.35; }
     .investigation-summary .root-cause { color: var(--ink); }
@@ -1416,7 +1483,10 @@ function renderReportHtml(
       .evidence-row, .safety-row { grid-template-columns: 1fr; gap: 4px; }
       .investigation-evidence li { grid-template-columns: 1fr; gap: 4px; }
       .repo-control { grid-template-columns: 1fr; }
+      .surface-head-actions,
+      .triage-gstack-head,
       .autofix-action-buttons { justify-content: stretch; }
+      .surface-head-actions button,
       .autofix-action-buttons button { width: 100%; }
       .triage-metrics { grid-template-columns: 1fr; }
       .triage-metric,
@@ -1439,8 +1509,8 @@ function renderReportHtml(
       </div>
       <div class="actions" aria-label="Analysis actions">
         <div class="action-panel">
-          <form method="post" action="/reports/${encodeURIComponent(reportId)}/triage">
-            <button class="safe" type="submit">Triage report</button>
+          <form method="post" action="/reports/${encodeURIComponent(reportId)}/triage?restart=1">
+            <button class="safe" type="submit">${triage ? 'Restart triage' : 'Start triage now'}</button>
           </form>
           <form
             class="autofix-action-form"
@@ -1515,13 +1585,7 @@ function renderReportHtml(
         </div>
       </section>
     </section>
-    <section class="surface autofix-result" id="triage-result">
-      <div class="surface-head">
-        <h2>Report Triage</h2>
-        <span class="status-pill ${pillClass(triageStatus(triage)).replace('pill','').trim()}">${escapeHtml(triageStatus(triage))}</span>
-      </div>
-      ${renderTriageHtml(reportId, triage)}
-    </section>
+    ${renderTriageReportHtml(reportId, report, triage, triageRunning, gstackReview)}
     <section class="surface autofix-result" id="gbrain-memory">
       <div class="surface-head">
         <h2>GBrain Memory</h2>
@@ -1541,7 +1605,6 @@ function renderReportHtml(
       </div>
       ${renderAnalysisResultHtml(reportId, autofix)}
     </section>
-    ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
     <details class="advanced-panel">
       <summary>Advanced: repo, memory receipts, agent comparison, debug payloads</summary>
       <div class="advanced-body">
@@ -1646,6 +1709,33 @@ function renderReportHtml(
         const body = await response.json();
         updateProgressFromStages(body && body.autofix && body.autofix.stages);
       }
+
+      const triageRoot = document.querySelector('[data-triage-report]');
+      async function startAutomaticTriage() {
+        if (!triageRoot || triageRoot.dataset.autoTriage !== 'true') return;
+        triageRoot.dataset.autoTriage = 'running';
+        const status = triageRoot.querySelector('[data-triage-status]');
+        const headline = triageRoot.querySelector('[data-triage-empty-headline]');
+        const line = triageRoot.querySelector('[data-triage-status-line]');
+        if (status) {
+          status.textContent = 'running';
+          status.className = 'status-pill info';
+        }
+        if (headline) headline.textContent = 'Triage is running';
+        if (line) line.textContent = 'Lite Annotate is turning the captured browser evidence into a triage report.';
+        try {
+          const response = await fetch(triageRoot.dataset.triageSrc || '', {
+            method: 'POST',
+            headers: { accept: 'application/json' },
+          });
+          await response.json().catch(() => null);
+        } catch (err) {
+          if (line) line.textContent = 'Unable to auto-start triage: ' + (err instanceof Error ? err.message : String(err));
+          return;
+        }
+        window.location.assign(triageRoot.dataset.triageView || window.location.href);
+      }
+      startAutomaticTriage();
 
       const gstackRoot = document.querySelector('[data-gstack-live]');
       let gstackPoll = null;
@@ -1879,6 +1969,12 @@ interface MemoryReceipt {
   source: 'current_browser_report' | 'prior_memory' | 'code_evidence' | 'verification' | 'outcome_memory';
   label: string;
   detail: string;
+}
+
+interface TriageRunResult {
+  triage: ReportTriage;
+  failed: boolean;
+  reused: boolean;
 }
 
 type GStackInvestigationStatus = StoredGStackReviewRecord['status'] | 'not_run';
@@ -2450,15 +2546,52 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   ${rawDetails}`;
 }
 
-function renderTriageHtml(reportId: string, triage: ReportTriage | null): string {
+function renderTriageReportHtml(
+  reportId: string,
+  report: LiteReport,
+  triage: ReportTriage | null,
+  triageRunning: boolean,
+  gstackReview: unknown
+): string {
+  const status = triageRunning && !triage ? 'running' : triageStatus(triage);
+  const restartLabel = triage ? 'Restart triage' : 'Start triage now';
+
+  return `<section
+    class="surface autofix-result"
+    id="triage-result"
+    data-triage-report
+    data-auto-triage="${!triage && !triageRunning ? 'true' : 'false'}"
+    data-triage-src="/reports/${encodeURIComponent(reportId)}/triage"
+    data-triage-view="/reports/${encodeURIComponent(reportId)}/view#triage-result"
+  >
+    <div class="surface-head">
+      <h2>Triage Report</h2>
+      <div class="surface-head-actions">
+        <span class="status-pill ${pillClass(status).replace('pill','').trim()}" data-triage-status>${escapeHtml(status)}</span>
+        <form method="post" action="/reports/${encodeURIComponent(reportId)}/triage?restart=1">
+          <button class="mini-action" type="submit">${escapeHtml(restartLabel)}</button>
+        </form>
+      </div>
+    </div>
+    ${renderTriageHtml(reportId, triage, triageRunning)}
+    ${renderGStackTriagePanelHtml(reportId, report, gstackReview)}
+  </section>`;
+}
+
+function renderTriageHtml(reportId: string, triage: ReportTriage | null, triageRunning = false): string {
   const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/triage">
     <summary>Debug triage JSON</summary>
     <pre data-analysis-raw>Open to load triage JSON.</pre>
   </details>`;
 
   if (!triage) {
-    return `<div class="analysis-body">
-      <p>No triage run yet. Triage uses captured browser evidence to decide whether this looks like a real bug before starting the heavier Auto-Fix path.</p>
+    const headline = triageRunning ? 'Triage is running' : 'Automatic triage is starting';
+    const detail = triageRunning
+      ? 'Lite Annotate is turning the captured browser evidence into a triage report.'
+      : 'Lite Annotate starts triage when this report opens. Use Restart triage after changing evidence or repo context.';
+    return `<div class="triage-state">
+      <strong data-triage-empty-headline>${escapeHtml(headline)}</strong>
+      <p class="triage-status-line" data-triage-status-line>${escapeHtml(detail)}</p>
     </div>
     ${rawDetails}`;
   }
@@ -2498,6 +2631,78 @@ function renderTriageHtml(reportId: string, triage: ReportTriage | null): string
     <ol class="evidence-chips">${evidence}</ol>
   </div>
   ${rawDetails}`;
+}
+
+function renderGStackTriagePanelHtml(
+  reportId: string,
+  report: LiteReport,
+  gstackReview: unknown
+): string {
+  const investigation = buildGStackInvestigation(
+    report,
+    isStoredGStackReview(gstackReview) ? gstackReview : null
+  );
+  const evidence = investigation.evidence.length
+    ? investigation.evidence.map((item) => (
+      `<li><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></li>`
+    )).join('')
+    : '<li><span>Evidence</span><strong>Run GStack Review to validate the triage against external repo/test evidence.</strong></li>';
+  const triggerState = getGStackUiTriggerState();
+  const qaTriggerState = getGStackQaTriggerState();
+  const active = investigation.status === 'queued' || investigation.status === 'running';
+  const reviewAction = triggerState.enabled && !active
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate" data-gstack-form data-gstack-workflow="investigate">
+        <button class="quiet" type="submit">Run GStack Review</button>
+      </form>`
+    : active
+      ? ''
+      : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
+  const qaAction = qaTriggerState.enabled && !active
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa" data-gstack-form data-gstack-workflow="qa">
+        <button class="quiet" type="submit">Run GStack QA</button>
+      </form>`
+    : '';
+  const followup = investigation.recommendedAction.type === 'autofix' && investigation.raw?.result
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
+        <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
+      </form>`
+    : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
+  const investigationUrl = `/reports/${encodeURIComponent(reportId)}/gstack/investigation`;
+
+  return `<div
+    class="triage-gstack-panel"
+    id="gstack-review"
+    data-gstack-live
+    data-gstack-src="${investigationUrl}"
+    data-gstack-active="${active ? 'true' : 'false'}"
+  >
+    <div class="triage-gstack-head">
+      <div class="triage-gstack-copy">
+        <h3>GStack Review</h3>
+        <strong data-gstack-headline>${escapeHtml(investigation.headline)}</strong>
+      </div>
+      <span class="${gstackStatusClassName(investigation.status)}" data-gstack-status>${escapeHtml(investigation.status)}</span>
+    </div>
+    <p class="root-cause" data-gstack-root-cause>${escapeHtml(investigation.rootCause)}</p>
+    <p data-gstack-meta>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
+    <div class="investigation-actions">
+      ${reviewAction}
+      ${qaAction}
+      ${followup}
+    </div>
+    <div class="gstack-console" aria-live="polite">
+      <div class="gstack-console-head">
+        <span>Runner console</span>
+        <span data-gstack-console-state>${escapeHtml(investigation.status)}</span>
+      </div>
+      <pre data-gstack-console>${escapeHtml(gstackConsoleText(investigation))}</pre>
+    </div>
+    <ul class="investigation-evidence" data-gstack-evidence>${evidence}</ul>
+    <details>
+      <summary>Runner response</summary>
+      <pre data-gstack-raw>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
+    </details>
+  </div>`;
 }
 
 function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
@@ -2547,78 +2752,6 @@ function gstackConsoleText(investigation: GStackInvestigationView): string {
     }
   }
   return lines.join('\n');
-}
-
-function renderGStackInvestigationHtml(
-  reportId: string,
-  report: LiteReport,
-  gstackReview: unknown
-): string {
-  const investigation = buildGStackInvestigation(
-    report,
-    isStoredGStackReview(gstackReview) ? gstackReview : null
-  );
-  const evidence = investigation.evidence.length
-    ? investigation.evidence.map((item) => (
-      `<li><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></li>`
-    )).join('')
-    : '<li><span>Evidence</span><strong>Run the investigation to connect browser evidence to repo evidence.</strong></li>';
-  const triggerState = getGStackUiTriggerState();
-  const qaTriggerState = getGStackQaTriggerState();
-  const active = investigation.status === 'queued' || investigation.status === 'running';
-  const investigateAction = triggerState.enabled && !active
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate" data-gstack-form data-gstack-workflow="investigate">
-        <button class="quiet" type="submit">Investigate with GStack</button>
-      </form>`
-    : active
-      ? ''
-    : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
-  const qaAction = qaTriggerState.enabled && !active
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa" data-gstack-form data-gstack-workflow="qa">
-        <button class="quiet" type="submit">Run GStack QA</button>
-      </form>`
-    : '';
-  const followup = investigation.recommendedAction.type === 'autofix' && investigation.raw?.result
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
-        <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
-      </form>`
-    : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
-  const investigationUrl = `/reports/${encodeURIComponent(reportId)}/gstack/investigation`;
-
-  return `<section
-    class="surface"
-    id="gstack-review"
-    data-gstack-live
-    data-gstack-src="${investigationUrl}"
-    data-gstack-active="${active ? 'true' : 'false'}"
-  >
-    <div class="surface-head">
-      <h2>GStack Review</h2>
-      <span class="${gstackStatusClassName(investigation.status)}" data-gstack-status>${escapeHtml(investigation.status)}</span>
-    </div>
-    <div class="investigation-summary">
-      <strong data-gstack-headline>${escapeHtml(investigation.headline)}</strong>
-      <p class="root-cause" data-gstack-root-cause>${escapeHtml(investigation.rootCause)}</p>
-      <p data-gstack-meta>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
-      <div class="investigation-actions">
-        ${investigateAction}
-        ${qaAction}
-        ${followup}
-      </div>
-    </div>
-    <div class="gstack-console" aria-live="polite">
-      <div class="gstack-console-head">
-        <span>Runner console</span>
-        <span data-gstack-console-state>${escapeHtml(investigation.status)}</span>
-      </div>
-      <pre data-gstack-console>${escapeHtml(gstackConsoleText(investigation))}</pre>
-    </div>
-    <ul class="investigation-evidence" data-gstack-evidence>${evidence}</ul>
-    <details>
-      <summary>Runner response</summary>
-      <pre data-gstack-raw>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
-    </details>
-  </section>`;
 }
 
 function gstackStatusClassName(status: string): string {
