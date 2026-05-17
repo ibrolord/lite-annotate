@@ -1095,6 +1095,35 @@ function renderReportHtml(
       background: var(--soft);
       color: var(--ink);
     }
+    .gstack-console {
+      display: grid;
+      gap: 8px;
+      margin: 0 16px 16px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code);
+      color: var(--code-text);
+    }
+    .gstack-console-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      color: oklch(0.82 0.018 248);
+      font: 760 11px ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .gstack-console pre {
+      margin: 0;
+      padding: 0;
+      max-height: 280px;
+      background: transparent;
+      color: inherit;
+      border-radius: 0;
+      white-space: pre-wrap;
+    }
     .investigation-evidence { display: grid; border-top: 1px solid var(--line); }
     .investigation-evidence li {
       display: grid;
@@ -1318,6 +1347,146 @@ function renderReportHtml(
         const body = await response.json();
         updateProgressFromStages(body && body.autofix && body.autofix.stages);
       }
+
+      const gstackRoot = document.querySelector('[data-gstack-live]');
+      let gstackPoll = null;
+      function isTerminalGStackStatus(status) {
+        return status === 'passed' || status === 'failed' || status === 'blocked' || status === 'not_run';
+      }
+      function gstackStatusClass(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'passed') return 'status-pill';
+        if (s === 'queued' || s === 'running') return 'status-pill info';
+        if (s === 'failed' || s === 'blocked') return 'status-pill warn';
+        return 'status-pill neutral';
+      }
+      function formatGStackConsole(investigation) {
+        const runner = investigation && investigation.runner ? investigation.runner : {};
+        const raw = investigation && investigation.raw ? investigation.raw : null;
+        const result = raw && raw.result ? raw.result : null;
+        const lines = [
+          '$ status: ' + (investigation?.status || 'unknown'),
+          '$ workflow: ' + (runner.workflow || 'unknown'),
+        ];
+        if (runner.jobId) lines.push('$ job: ' + runner.jobId);
+        if (investigation?.confidence) lines.push('$ confidence: ' + investigation.confidence);
+        if (Array.isArray(runner.commandsRun) && runner.commandsRun.length) {
+          lines.push('$ commands: ' + runner.commandsRun.join(' -> '));
+        }
+        if (investigation?.status === 'queued') lines.push('runner: queued; waiting for the remote GStack worker to start');
+        if (investigation?.status === 'running') lines.push('runner: running; waiting for the next callback');
+        if (investigation?.headline) lines.push('headline: ' + investigation.headline);
+        if (investigation?.rootCause) lines.push('root cause: ' + investigation.rootCause);
+        if (result && typeof result.summary === 'string' && result.summary.trim()) {
+          lines.push('summary: ' + result.summary.trim());
+        }
+        if (Array.isArray(investigation?.evidence)) {
+          investigation.evidence.forEach((item) => {
+            if (!item) return;
+            lines.push('evidence[' + (item.label || 'Evidence') + ']: ' + (item.value || ''));
+          });
+        }
+        if (result && Array.isArray(result.tests)) {
+          result.tests.forEach((item) => {
+            if (!item) return;
+            const output = typeof item.output === 'string' && item.output.trim() ? ' - ' + item.output.trim() : '';
+            lines.push('test[' + (item.status || 'unknown') + ']: ' + (item.command || 'unknown') + output);
+          });
+        }
+        return lines.join('\\n');
+      }
+      function setGStackButtonsDisabled(disabled) {
+        document.querySelectorAll('[data-gstack-form] button').forEach((button) => { button.disabled = disabled; });
+      }
+      function updateGStackSection(investigation) {
+        if (!gstackRoot || !investigation) return;
+        const status = investigation.status || 'not_run';
+        gstackRoot.dataset.gstackActive = status === 'queued' || status === 'running' ? 'true' : 'false';
+        const statusNode = gstackRoot.querySelector('[data-gstack-status]');
+        const headline = gstackRoot.querySelector('[data-gstack-headline]');
+        const rootCause = gstackRoot.querySelector('[data-gstack-root-cause]');
+        const meta = gstackRoot.querySelector('[data-gstack-meta]');
+        const state = gstackRoot.querySelector('[data-gstack-console-state]');
+        const consoleNode = gstackRoot.querySelector('[data-gstack-console]');
+        const rawNode = gstackRoot.querySelector('[data-gstack-raw]');
+        const evidenceNode = gstackRoot.querySelector('[data-gstack-evidence]');
+        if (statusNode) {
+          statusNode.textContent = status;
+          statusNode.className = gstackStatusClass(status);
+        }
+        if (headline) headline.textContent = investigation.headline || '';
+        if (rootCause) rootCause.textContent = investigation.rootCause || '';
+        if (meta) {
+          const job = investigation.runner && investigation.runner.jobId ? ' · Job ' + investigation.runner.jobId : '';
+          meta.textContent = 'Confidence: ' + (investigation.confidence || 'unknown') + job;
+        }
+        if (state) state.textContent = status;
+        if (consoleNode) consoleNode.textContent = formatGStackConsole(investigation);
+        if (rawNode) rawNode.textContent = JSON.stringify(investigation.raw || null, null, 2);
+        if (evidenceNode && Array.isArray(investigation.evidence)) {
+          evidenceNode.replaceChildren();
+          investigation.evidence.forEach((item) => {
+            const li = document.createElement('li');
+            const label = document.createElement('span');
+            const value = document.createElement('strong');
+            label.textContent = item && item.label ? item.label : 'Evidence';
+            value.textContent = item && item.value ? item.value : '';
+            li.append(label, value);
+            evidenceNode.appendChild(li);
+          });
+        }
+        setGStackButtonsDisabled(!isTerminalGStackStatus(status));
+      }
+      async function refreshGStack() {
+        if (!gstackRoot) return null;
+        const src = gstackRoot.dataset.gstackSrc;
+        if (!src) return null;
+        const response = await fetch(src, { headers: { accept: 'application/json' } });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const body = await response.json();
+        updateGStackSection(body && body.investigation);
+        return body && body.investigation;
+      }
+      function startGStackPolling() {
+        if (!gstackRoot || gstackPoll) return;
+        gstackPoll = window.setInterval(async () => {
+          try {
+            const investigation = await refreshGStack();
+            if (investigation && isTerminalGStackStatus(investigation.status)) {
+              window.clearInterval(gstackPoll);
+              gstackPoll = null;
+            }
+          } catch {
+            // Keep polling; transient runner/API failures are shown when the callback lands.
+          }
+        }, 1500);
+      }
+      if (gstackRoot && gstackRoot.dataset.gstackActive === 'true') startGStackPolling();
+
+      document.querySelectorAll('[data-gstack-form]').forEach((form) => {
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const workflow = form.dataset.gstackWorkflow || 'investigate';
+          setGStackButtonsDisabled(true);
+          const consoleNode = gstackRoot && gstackRoot.querySelector('[data-gstack-console]');
+          if (consoleNode) consoleNode.textContent = '$ workflow: ' + workflow + '\\nrunner: queueing remote GStack job...';
+          try {
+            const response = await fetch(form.action, {
+              method: 'POST',
+              headers: { accept: 'application/json' },
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok) throw new Error((body && (body.message || body.error)) || 'HTTP ' + response.status);
+            updateGStackSection(body && body.investigation);
+            startGStackPolling();
+          } catch (err) {
+            setGStackButtonsDisabled(false);
+            if (consoleNode) {
+              consoleNode.textContent = '$ workflow: ' + workflow + '\\nrunner: failed to queue job\\nerror: ' + (err instanceof Error ? err.message : String(err));
+            }
+          }
+        });
+      });
 
       document.querySelectorAll('[data-autofix-form]').forEach((form) => {
         form.addEventListener('submit', async (event) => {
@@ -1895,14 +2064,14 @@ function renderGStackInvestigationHtml(
   const qaTriggerState = getGStackQaTriggerState();
   const active = investigation.status === 'queued' || investigation.status === 'running';
   const investigateAction = triggerState.enabled && !active
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate">
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/investigate" data-gstack-form data-gstack-workflow="investigate">
         <button class="quiet" type="submit">Investigate with GStack</button>
       </form>`
     : active
       ? ''
     : `<p class="investigation-disabled">${escapeHtml(triggerState.message)}</p>`;
   const qaAction = qaTriggerState.enabled && !active
-    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa">
+    ? `<form method="post" action="/reports/${encodeURIComponent(reportId)}/gstack/qa" data-gstack-form data-gstack-workflow="qa">
         <button class="quiet" type="submit">Run GStack QA</button>
       </form>`
     : '';
@@ -1911,28 +2080,81 @@ function renderGStackInvestigationHtml(
         <button class="safe" type="submit">${escapeHtml(investigation.recommendedAction.label)}</button>
       </form>`
     : `<p>${escapeHtml(investigation.recommendedAction.label)}</p>`;
+  const investigationUrl = `/reports/${encodeURIComponent(reportId)}/gstack/investigation`;
 
-  return `<section class="surface" id="gstack-review">
+  return `<section
+    class="surface"
+    id="gstack-review"
+    data-gstack-live
+    data-gstack-src="${investigationUrl}"
+    data-gstack-active="${active ? 'true' : 'false'}"
+  >
     <div class="surface-head">
       <h2>GStack Investigation</h2>
-      <span class="status-pill">${escapeHtml(investigation.status)}</span>
+      <span class="${gstackStatusClassName(investigation.status)}" data-gstack-status>${escapeHtml(investigation.status)}</span>
     </div>
     <div class="investigation-summary">
-      <strong>${escapeHtml(investigation.headline)}</strong>
-      <p class="root-cause">${escapeHtml(investigation.rootCause)}</p>
-      <p>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
+      <strong data-gstack-headline>${escapeHtml(investigation.headline)}</strong>
+      <p class="root-cause" data-gstack-root-cause>${escapeHtml(investigation.rootCause)}</p>
+      <p data-gstack-meta>Confidence: ${escapeHtml(investigation.confidence)}${investigation.runner.jobId ? ` · Job ${escapeHtml(investigation.runner.jobId)}` : ''}</p>
       <div class="investigation-actions">
         ${investigateAction}
         ${qaAction}
         ${followup}
       </div>
     </div>
-    <ul class="investigation-evidence">${evidence}</ul>
+    <div class="gstack-console" aria-live="polite">
+      <div class="gstack-console-head">
+        <span>Live runner console</span>
+        <span data-gstack-console-state>${escapeHtml(investigation.status)}</span>
+      </div>
+      <pre data-gstack-console>${escapeHtml(gstackConsoleText(investigation))}</pre>
+    </div>
+    <ul class="investigation-evidence" data-gstack-evidence>${evidence}</ul>
     <details>
       <summary>Runner response</summary>
-      <pre>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
+      <pre data-gstack-raw>${escapeHtml(JSON.stringify(investigation.raw, null, 2))}</pre>
     </details>
   </section>`;
+}
+
+function gstackConsoleText(investigation: GStackInvestigationView): string {
+  const lines = [
+    `$ status: ${investigation.status}`,
+    `$ workflow: ${investigation.runner.workflow}`,
+  ];
+  if (investigation.runner.jobId) lines.push(`$ job: ${investigation.runner.jobId}`);
+  lines.push(`$ confidence: ${investigation.confidence}`);
+  if (investigation.runner.commandsRun.length) {
+    lines.push(`$ commands: ${investigation.runner.commandsRun.join(' -> ')}`);
+  }
+  if (investigation.status === 'queued') lines.push('runner: queued; waiting for the remote GStack worker to start');
+  if (investigation.status === 'running') lines.push('runner: running; waiting for the next callback');
+  if (investigation.headline) lines.push(`headline: ${investigation.headline}`);
+  if (investigation.rootCause) lines.push(`root cause: ${investigation.rootCause}`);
+  const summary = investigation.raw?.result?.summary;
+  if (typeof summary === 'string' && summary.trim()) lines.push(`summary: ${summary.trim()}`);
+  for (const item of investigation.evidence) {
+    lines.push(`evidence[${item.label}]: ${item.value}`);
+  }
+  const tests = investigation.raw?.result?.tests;
+  if (Array.isArray(tests)) {
+    for (const test of tests) {
+      if (!test || typeof test !== 'object') continue;
+      const command = typeof test.command === 'string' ? test.command : 'unknown';
+      const status = typeof test.status === 'string' ? test.status : 'unknown';
+      const output = typeof test.output === 'string' && test.output.trim() ? ` - ${test.output.trim()}` : '';
+      lines.push(`test[${status}]: ${command}${output}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function gstackStatusClassName(status: string): string {
+  if (status === 'passed') return 'status-pill';
+  if (status === 'queued' || status === 'running') return 'status-pill info';
+  if (status === 'failed' || status === 'blocked') return 'status-pill warn';
+  return 'status-pill neutral';
 }
 
 function isStoredGStackReview(value: unknown): value is StoredGStackReviewRecord {

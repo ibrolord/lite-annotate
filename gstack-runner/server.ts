@@ -78,13 +78,14 @@ async function processJob(job: RunnerJob): Promise<void> {
   const checkoutDir = join(job.workDir, 'repo');
   await cloneRepo(job.request.repo, checkoutDir, job.request.allowPr);
 
-  const prompt = buildClaudePrompt(job.request);
+  const claudeInvocation = buildClaudeInvocation(job.request);
   const claude = await runCommand(
     process.env.CLAUDE_BIN || 'claude',
-    ['-p', prompt, '--max-turns', process.env.CLAUDE_MAX_TURNS || '8'],
+    claudeInvocation.args,
     checkoutDir,
     Number.parseInt(process.env.GSTACK_JOB_TIMEOUT_MS || '900000', 10),
-    buildRunnerCommandEnv(job.request.allowPr)
+    buildRunnerCommandEnv(job.request.allowPr),
+    claudeInvocation.stdin
   );
 
   job.logs = redactSecrets(claude.stdout + (claude.stderr ? `\n--- stderr ---\n${claude.stderr}` : ''));
@@ -120,6 +121,13 @@ function publicRepoUrl(repo: string): string {
   const trimmed = repo.trim().replace(/\.git$/i, '');
   if (/^https?:\/\//i.test(trimmed) || /^git@github\.com:/i.test(trimmed)) return trimmed;
   return `https://github.com/${trimmed}.git`;
+}
+
+export function buildClaudeInvocation(request: GStackReviewRequest): { args: string[]; stdin: string } {
+  return {
+    args: ['-p', '--max-turns', process.env.CLAUDE_MAX_TURNS || '8'],
+    stdin: buildClaudePrompt(request),
+  };
 }
 
 export function buildClaudePrompt(request: GStackReviewRequest): string {
@@ -440,9 +448,10 @@ async function runCommand(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  stdin?: string
 ): Promise<{ stdout: string; stderr: string }> {
-  return runCommandWithEnv(command, args, cwd, timeoutMs, env);
+  return runCommandWithEnv(command, args, cwd, timeoutMs, env, stdin);
 }
 
 async function runCommandWithEnv(
@@ -450,10 +459,11 @@ async function runCommandWithEnv(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  stdin?: string
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -461,12 +471,30 @@ async function runCommandWithEnv(
       reject(new Error(`${command} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
+    if (!child.stdout || !child.stderr || (stdin !== undefined && !child.stdin)) {
+      clearTimeout(timer);
+      child.kill('SIGTERM');
+      reject(new Error(`${command} did not expose expected stdio streams`));
+      return;
+    }
+
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
+    if (stdin !== undefined) {
+      if (!child.stdin) {
+        clearTimeout(timer);
+        reject(new Error(`${command} did not expose a stdin pipe`));
+        return;
+      }
+      child.stdin.on('error', () => {
+        // If the child exits before reading stdin, the normal exit/error path will report it.
+      });
+      child.stdin.end(stdin);
+    }
     child.on('error', (err) => {
       clearTimeout(timer);
       reject(err);
@@ -548,4 +576,4 @@ if (directRun) {
   });
 }
 
-export { app, buildRunnerCommandEnv, repoUrl as buildCloneUrl, recoverInterruptedJobs, redactSecrets };
+export { app, buildRunnerCommandEnv, repoUrl as buildCloneUrl, recoverInterruptedJobs, redactSecrets, runCommand };

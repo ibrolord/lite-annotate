@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { createApp } from '../api/index.js';
 import { createMemoryAdapter } from '../api/gbrain.js';
 import { ReportStore } from '../api/report_store.js';
-import { app as runnerApp, buildClaudePrompt, buildCloneUrl, buildRunnerCommandEnv } from '../gstack-runner/server.js';
+import { app as runnerApp, buildClaudeInvocation, buildClaudePrompt, buildCloneUrl, buildRunnerCommandEnv, runCommand } from '../gstack-runner/server.js';
 
 test('GStack review endpoint creates remote job and callback stores result', async () => {
   const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
@@ -205,6 +205,9 @@ test('GStack investigation button redirects back to the report and shows queued 
 
     const initialView = await app.request(`/reports/${posted.reportId}/view`);
     const initialHtml = await initialView.text();
+    assert.match(initialHtml, /data-gstack-live/);
+    assert.match(initialHtml, /data-gstack-src="\/reports\/[^"]+\/gstack\/investigation"/);
+    assert.match(initialHtml, /data-gstack-form data-gstack-workflow="investigate"/);
     assert.match(initialHtml, /<button class="quiet" type="submit">Investigate with GStack<\/button>/);
     assert.doesNotMatch(initialHtml, /GStack investigation is available through the protected API/);
     assert.doesNotMatch(initialHtml, /<button class="safe" type="submit">Investigate with GStack<\/button>/);
@@ -224,6 +227,8 @@ test('GStack investigation button redirects back to the report and shows queued 
 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
+    assert.match(html, /data-gstack-active="true"/);
+    assert.match(html, /Live runner console/);
     assert.match(html, /GStack investigation is queued/);
     assert.match(html, /gstack_job_ui_123/);
     assert.match(html, /Runner response/);
@@ -287,6 +292,7 @@ test('GStack QA button creates a qa job without PR permissions by default', asyn
 
     const initialView = await app.request(`/reports/${posted.reportId}/view`);
     const initialHtml = await initialView.text();
+    assert.match(initialHtml, /data-gstack-form data-gstack-workflow="qa"/);
     assert.match(initialHtml, /<button class="quiet" type="submit">Run GStack QA<\/button>/);
 
     const create = await app.request(`/reports/${posted.reportId}/gstack/qa`, {
@@ -305,6 +311,8 @@ test('GStack QA button creates a qa job without PR permissions by default', asyn
 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
+    assert.match(html, /Live runner console/);
+    assert.match(html, /\$ workflow: qa/);
     assert.match(html, /GStack QA is queued/);
     assert.match(html, /gstack_job_qa_123/);
 
@@ -706,6 +714,58 @@ test('GStack QA prompt is bounded to one QA pass and no ship loop', () => {
   assert.match(prompt, /Do not run \/ship/i);
   assert.match(prompt, /Stop and return the RESULT_JSON after \/qa/i);
   assert.match(prompt, /"commandsRun": \["\/investigate", "\/qa"\]/);
+});
+
+test('GStack runner sends large Claude prompts over stdin instead of argv', async () => {
+  const marker = 'E2BIG_REGRESSION_MARKER';
+  const largeDescription = `${marker}\n${'Large browser report payload. '.repeat(16000)}`;
+  const invocation = buildClaudeInvocation({
+    reportId: 'bug_339938bf-9d03-4b33-b19a-d00d998f21ed',
+    repo: 'ibrolord/lite-annotate-demo',
+    mode: 'investigate',
+    allowPr: false,
+    report: {
+      id: 'bug_339938bf-9d03-4b33-b19a-d00d998f21ed',
+      projectId: 'demo',
+      repo: 'ibrolord/lite-annotate-demo',
+      title: 'Large payload should not break the GStack runner',
+      description: largeDescription,
+      url: 'https://example.com/account',
+      route: '/account',
+      userAgent: 'node-test',
+      viewport: { width: 1280, height: 720 },
+      annotation: {
+        title: 'Large payload should not break the GStack runner',
+        description: largeDescription,
+      },
+      console: [{ level: 'error', message: largeDescription, timestamp: '2026-05-16T00:00:00.000Z' }],
+      network: [],
+      session: [],
+      screenshot: { type: 'failure', reason: largeDescription },
+      createdAt: '2026-05-16T00:00:00.000Z',
+    },
+    callbackUrl: 'https://lite-annotate.example.com/internal/gstack-callback',
+  });
+
+  const argv = invocation.args.join('\0');
+  assert.equal(invocation.args[0], '-p');
+  assert.equal(argv.includes(marker), false);
+  assert.ok(argv.length < 1000);
+  assert.ok(invocation.stdin.length > 300000);
+  assert.ok(invocation.stdin.includes(marker));
+
+  const echoed = await runCommand(
+    process.execPath,
+    ['-e', 'let input = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(JSON.stringify({ length: input.length, hasMarker: input.includes(process.argv[1]) })));', marker],
+    process.cwd(),
+    5000,
+    process.env,
+    invocation.stdin
+  );
+  assert.deepEqual(JSON.parse(echoed.stdout.trim()), {
+    length: invocation.stdin.length,
+    hasMarker: true,
+  });
 });
 
 test('GStack runner rejects invalid job JSON', async () => {
