@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://youtu.be/l-wpli3qX8k">
+    <img src="https://img.youtube.com/vi/l-wpli3qX8k/hqdefault.jpg" alt="Lite Annotate demo video" width="720">
+  </a>
+</p>
+
 # Lite Annotate
 
 Lite Annotate turns in-product bug reports into engineering-ready work. Setup is one config block and one async script tag; no app package, framework adapter, build plugin, or SDK call is required for the capture path.
