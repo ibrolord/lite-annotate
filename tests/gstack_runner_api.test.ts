@@ -716,7 +716,7 @@ test('GStack QA prompt is bounded to one QA pass and no ship loop', () => {
   assert.match(prompt, /"commandsRun": \["\/investigate", "\/qa"\]/);
 });
 
-test('GStack runner sends large Claude prompts over stdin instead of argv', async () => {
+test('GStack runner sends bounded Claude prompts over stdin instead of argv', async () => {
   const marker = 'E2BIG_REGRESSION_MARKER';
   const largeDescription = `${marker}\n${'Large browser report payload. '.repeat(16000)}`;
   const invocation = buildClaudeInvocation({
@@ -751,8 +751,10 @@ test('GStack runner sends large Claude prompts over stdin instead of argv', asyn
   assert.equal(invocation.args[0], '-p');
   assert.equal(argv.includes(marker), false);
   assert.ok(argv.length < 1000);
-  assert.ok(invocation.stdin.length > 300000);
+  assert.ok(invocation.stdin.length < 30000);
   assert.ok(invocation.stdin.includes(marker));
+  assert.ok(invocation.stdin.includes('[truncated '));
+  assert.equal(invocation.stdin.includes('Large browser report payload. '.repeat(500)), false);
 
   const echoed = await runCommand(
     process.execPath,

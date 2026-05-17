@@ -16,6 +16,11 @@ interface RunnerJob extends StoredGStackReviewRecord {
 }
 
 const app = new Hono();
+const MAX_REPORT_TEXT_CHARS = 3000;
+const MAX_BREADCRUMB_TEXT_CHARS = 1000;
+const MAX_CONSOLE_EVENTS = 10;
+const MAX_NETWORK_EVENTS = 12;
+const MAX_SESSION_EVENTS = 20;
 
 app.get('/health', (c) => c.json({ ok: true, service: 'gstack-runner' }));
 
@@ -171,7 +176,7 @@ ${JSON.stringify({
     reportUrl: request.reportUrl,
     memoryUrl: request.memoryUrl,
     handoffUrl: request.handoffUrl,
-    report: request.report,
+    report: compactReportForPrompt(request.report),
   }, null, 2)}
 
 Expected JSON shape:
@@ -190,6 +195,107 @@ Expected JSON shape:
   "prUrl": "optional",
   "commitSha": "optional"
   }`;
+}
+
+function compactReportForPrompt(report: GStackReviewRequest['report']): Record<string, unknown> {
+  return {
+    id: report.id,
+    projectId: report.projectId,
+    repo: report.repo,
+    title: truncateText(report.title, MAX_REPORT_TEXT_CHARS),
+    description: truncateText(report.description, MAX_REPORT_TEXT_CHARS),
+    url: report.url,
+    route: report.route,
+    userAgent: truncateText(report.userAgent, 500),
+    viewport: report.viewport,
+    annotation: {
+      title: truncateText(report.annotation.title, MAX_REPORT_TEXT_CHARS),
+      description: truncateText(report.annotation.description, MAX_REPORT_TEXT_CHARS),
+      target: truncateText(report.annotation.target, MAX_BREADCRUMB_TEXT_CHARS),
+      selector: truncateText(report.annotation.selector, MAX_BREADCRUMB_TEXT_CHARS),
+      route: report.annotation.route,
+      x: report.annotation.x,
+      y: report.annotation.y,
+      viewportX: report.annotation.viewportX,
+      viewportY: report.annotation.viewportY,
+      elementRect: report.annotation.elementRect,
+    },
+    console: prioritizeConsole(report.console).map((entry) => ({
+      level: entry.level,
+      message: truncateText(entry.message, MAX_BREADCRUMB_TEXT_CHARS),
+      timestamp: entry.timestamp,
+      source: truncateText(entry.source, 300),
+      stack: truncateText(entry.stack, MAX_BREADCRUMB_TEXT_CHARS),
+    })),
+    network: prioritizeNetwork(report.network).map((entry) => ({
+      type: entry.type,
+      method: entry.method,
+      url: truncateText(entry.url, MAX_BREADCRUMB_TEXT_CHARS),
+      status: entry.status,
+      durationMs: entry.durationMs,
+      failed: entry.failed,
+      error: truncateText(entry.error, MAX_BREADCRUMB_TEXT_CHARS),
+      timestamp: entry.timestamp,
+    })),
+    session: report.session.slice(-MAX_SESSION_EVENTS).map((entry) => ({
+      type: entry.type,
+      target: truncateText(entry.target, MAX_BREADCRUMB_TEXT_CHARS),
+      route: entry.route,
+      value: truncateText(entry.value, MAX_BREADCRUMB_TEXT_CHARS),
+      timestamp: entry.timestamp,
+    })),
+    screenshot: compactScreenshot(report.screenshot),
+    createdAt: report.createdAt,
+    omitted: {
+      consoleEvents: Math.max(0, report.console.length - MAX_CONSOLE_EVENTS),
+      networkEvents: Math.max(0, report.network.length - MAX_NETWORK_EVENTS),
+      sessionEvents: Math.max(0, report.session.length - MAX_SESSION_EVENTS),
+    },
+  };
+}
+
+function prioritizeConsole(reportConsole: GStackReviewRequest['report']['console']): GStackReviewRequest['report']['console'] {
+  const important = reportConsole.filter((entry) => /error|warn/i.test(entry.level));
+  const latest = reportConsole.slice(-MAX_CONSOLE_EVENTS);
+  return uniqueBreadcrumbs([...important.slice(-MAX_CONSOLE_EVENTS), ...latest], MAX_CONSOLE_EVENTS, (entry) => `${entry.timestamp}:${entry.level}:${entry.message}`);
+}
+
+function prioritizeNetwork(network: GStackReviewRequest['report']['network']): GStackReviewRequest['report']['network'] {
+  const important = network.filter((entry) => entry.failed || (entry.status !== null && entry.status >= 400));
+  const latest = network.slice(-MAX_NETWORK_EVENTS);
+  return uniqueBreadcrumbs([...important.slice(-MAX_NETWORK_EVENTS), ...latest], MAX_NETWORK_EVENTS, (entry) => `${entry.timestamp ?? ''}:${entry.method}:${entry.url}:${entry.status ?? ''}`);
+}
+
+function uniqueBreadcrumbs<T>(items: T[], limit: number, keyFor: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = keyFor(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out.slice(-limit);
+}
+
+function compactScreenshot(screenshot: GStackReviewRequest['report']['screenshot']): Record<string, unknown> {
+  if (screenshot.type === 'failure') {
+    return { type: screenshot.type, reason: truncateText(screenshot.reason, MAX_BREADCRUMB_TEXT_CHARS) };
+  }
+  const value = screenshot.value ?? '';
+  if (/^https?:\/\//i.test(value)) {
+    return { type: screenshot.type, value: truncateText(value, MAX_BREADCRUMB_TEXT_CHARS) };
+  }
+  return {
+    type: screenshot.type,
+    value: value ? `[screenshot data omitted: ${value.length} chars]` : undefined,
+  };
+}
+
+function truncateText(value: string | undefined, maxChars: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n...[truncated ${value.length - maxChars} chars]`;
 }
 
 function buildRunnerFailureResult(job: RunnerJob, error: string): GStackReviewResult {
