@@ -374,6 +374,10 @@ function isVisualLayoutReport(report: ReportLike): boolean {
   return visualSignal.test(text);
 }
 
+function isMediaSourceReport(report: ReportLike): boolean {
+  return /\b(image|images|img|photo|photos|picture|pictures|thumbnail|asset|media)\b|image failed to load|failed to load.*image/i.test(reportText(report));
+}
+
 function isDisplayedValueReport(report: ReportLike): boolean {
   const userIntentText = [
     report.title,
@@ -418,6 +422,7 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
   const selectors = selectorTokens(report);
   const phrases = annotationPhrases(report);
   const visualLayoutReport = isVisualLayoutReport(report);
+  const mediaSourceReport = isMediaSourceReport(report);
   const displayedValueReport = isDisplayedValueReport(report);
 
   return index.files
@@ -498,6 +503,17 @@ export function rankCandidateFiles(index: CodeIndex, report: ReportLike): Ranked
         })) {
           addScore(state, 1600, 'script owns symbol related to reported displayed value');
         }
+      }
+
+      if (mediaSourceReport && isScriptPath(file.path) && /imageSrc|imageAlt|assets\/|\/images?\/|\/photos?\//i.test(file.content)) {
+        addScore(state, 2600, 'script owns image source data for reported media issue');
+        if (/catalog|products?/i.test(file.path)) {
+          addScore(state, 900, 'file path matches catalog/product media ownership');
+        }
+      }
+
+      if (mediaSourceReport && (isScriptPath(file.path) || isMarkupPath(file.path)) && /<img\b|product-image|product-art|image failed to load/i.test(file.content)) {
+        addScore(state, 1700, 'file renders or handles product image UI for reported media issue');
       }
 
       if (visualLayoutReport && isStylePath(file.path) && /font-size|line-height|max-width|min-width|white-space|overflow|flex|grid|word-break|text-wrap/i.test(file.content)) {

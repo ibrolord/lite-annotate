@@ -33,6 +33,37 @@ module.exports = { formatUserGreeting };
   return root;
 }
 
+function makeCatalogRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), 'lite-annotate-media-diagnosis-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(
+    join(root, 'src', 'catalog.js'),
+    `export const products = [
+  {
+    id: 'canvas-weekender',
+    name: 'Canvas Weekender',
+    imageSrc: '',
+    imageAlt: 'Canvas weekender bag'
+  }
+];
+`
+  );
+  writeFileSync(
+    join(root, 'src', 'app.js'),
+    `import { products } from './catalog.js';
+
+export function renderProducts(productGrid) {
+  productGrid.innerHTML = products.map((product) => product.imageSrc
+    ? '<img class="product-image" src="' + product.imageSrc + '" alt="' + product.imageAlt + '">'
+    : '<div class="product-art" role="img"></div>'
+  ).join('');
+}
+`
+  );
+  writeFileSync(join(root, 'src', 'styles.css'), `.product-art { background: #eee; }\n`);
+  return root;
+}
+
 const pinnedReport = {
   title: 'User profile crashes reading name',
   description: 'Clicking load profile crashes',
@@ -78,6 +109,52 @@ test('diagnoseReport returns structured pinned demo diagnosis with evidence and 
     assert.ok(diagnosis.evidence.some((item) => item.includes("reading 'name'")));
     assert.ok(diagnosis.evidence.some((item) => item.includes('src/users.js')));
     assert.equal(shouldPatchDiagnosis(diagnosis).ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('diagnoseReport targets catalog image data for missing product images', () => {
+  const root = makeCatalogRepo();
+  try {
+    const index = buildCodeIndex(root);
+    const candidates = rankCandidateFiles(index, {
+      title: 'Why dont you guys have images of the items',
+      description: 'The catalog cards have no product photos.',
+      route: '/shop',
+      annotation: {
+        selector: '.product-art',
+        description: 'Product cards are showing blank generated art instead of item images.',
+      },
+      console: [
+        {
+          level: 'error',
+          message: '[cedar-and-sail] product image failed to load',
+        },
+      ],
+    });
+
+    const diagnosis = diagnoseReport({
+      title: 'Why dont you guys have images of the items',
+      description: 'The catalog cards have no product photos.',
+      route: '/shop',
+      annotation: {
+        selector: '.product-art',
+        description: 'Product cards are showing blank generated art instead of item images.',
+      },
+      console: [
+        {
+          level: 'error',
+          message: '[cedar-and-sail] product image failed to load',
+        },
+      ],
+    }, candidates);
+
+    assert.ok(candidates[0]?.path === 'src/catalog.js' || candidates[0]?.path === 'src/app.js');
+    assert.ok(diagnosis.targetFiles.includes('src/catalog.js'));
+    assert.ok(diagnosis.targetFiles.includes('src/app.js'));
+    assert.match(diagnosis.rootCause, /image source|image rendering|missing media/i);
+    assert.equal(diagnosis.shouldPatch, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -71,6 +71,10 @@ function hasVisualLayoutSignal(report: ReportLike): boolean {
   return strongVisualSignal.test(userIntentText) || visualSignal.test(reportText(report));
 }
 
+function hasMediaSourceSignal(report: ReportLike): boolean {
+  return /\b(image|images|img|photo|photos|picture|pictures|thumbnail|asset|media)\b|image failed to load|failed to load.*image/i.test(reportText(report));
+}
+
 function hasDisplayedValueSignal(report: ReportLike): boolean {
   const userIntentText = [
     report.title,
@@ -188,7 +192,8 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
 
   const property = referencedProperty(report);
   const missingProperty = hasMissingPropertyError(report);
-  const visualLayout = !missingProperty && hasVisualLayoutSignal(report);
+  const mediaSource = !missingProperty && hasMediaSourceSignal(report);
+  const visualLayout = !missingProperty && !mediaSource && hasVisualLayoutSignal(report);
   const displayedValue = !missingProperty && !visualLayout && hasDisplayedValueSignal(report);
   const color = requestedColor(report);
   const propertyRead = property
@@ -211,7 +216,15 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   if (domUpdateLine) evidence.push(`Code: ${top.path} updates displayed UI state ${domUpdateLine}`);
   if (report.route) evidence.push(`Route: ${report.route}`);
 
-  const targetFiles = visualLayout
+  const targetFiles = mediaSource
+    ? candidates
+        .filter((candidate) =>
+          /\.(?:[cm]?[jt]sx?|html)$/i.test(candidate.path) &&
+          /imageSrc|imageAlt|<img\b|product-image|product-art|assets\/|\/images?\/|\/photos?\/|catalog|products?/i.test(`${candidate.path}\n${candidate.file.content}`)
+        )
+        .slice(0, MAX_TARGET_FILES)
+        .map((candidate) => candidate.path)
+    : visualLayout
     ? (color
         ? candidates.filter((candidate) => /\.(?:s?css)$/i.test(candidate.path)).slice(0, 1)
         : candidates.filter((candidate) => /\.(?:html|s?css|jsx|tsx)$/i.test(candidate.path)).slice(0, MAX_TARGET_FILES)
@@ -223,10 +236,11 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
   const hasVisualStyleTarget = visualLayout && targetFiles.some((path) => /\.(?:s?css)$/i.test(path));
 
   const confidence = clampConfidence(
-    (visualLayout ? 0.52 : displayedValue ? 0.56 : 0.45) +
+    (mediaSource ? 0.62 : visualLayout ? 0.52 : displayedValue ? 0.56 : 0.45) +
       (top.score >= 300 ? 0.15 : 0) +
       (missingProperty ? 0.15 : 0) +
       (propertyRead ? 0.12 : 0) +
+      (mediaSource && targetFiles.length > 0 ? 0.08 : 0) +
       (visualLayout && styleLine ? 0.11 : 0) +
       (displayedValue && domUpdateLine ? 0.16 : 0) +
       (color && hasVisualStyleTarget ? 0.21 : 0)
@@ -238,6 +252,8 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
         ? `${top.path} dereferences a lookup result's ${property} property before confirming the record exists.`
         : displayedValue
           ? `${top.path} owns the annotated displayed value and updates the related DOM state for the reported count/text.`
+      : mediaSource
+        ? `${targetFiles.join(', ') || top.path} owns the product image source or image rendering path for the reported missing media.`
       : visualLayout
         ? targetFiles.length > 0 && !targetFiles.includes(top.path)
           ? `${targetFiles.join(', ')} is the stylesheet target for the visual report. ${top.path} came from a noisy stack trace and is kept as context.`
@@ -256,6 +272,8 @@ export function diagnoseReport(report: ReportLike, candidates: RankedCandidateFi
         ? `Add a missing-record guard or fallback before reading ${property}.`
         : displayedValue
           ? 'Make the smallest UI state update that removes the incorrect displayed value without changing unrelated layout.'
+        : mediaSource
+          ? 'Set valid product image sources or adjust the narrow image rendering fallback for the reported missing media.'
         : visualLayout
           ? color
             ? `Make the smallest stylesheet change that sets the reported button background to ${color} without changing unrelated UI.`
