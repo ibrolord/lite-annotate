@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { openVerifiedPR } from '../../api/worker/pr_gate.ts';
+import { createDirectGitHubPR, openVerifiedPR } from '../../api/worker/pr_gate.ts';
 import type { PersonBPipelineResult } from '../../api/worker/person_b_pipeline.ts';
 
 function basePipelineResult(): PersonBPipelineResult {
@@ -62,6 +62,13 @@ function basePipelineResult(): PersonBPipelineResult {
           stderr: '',
         },
       ],
+    },
+    artifact: {
+      type: 'fix_pr',
+      reportClass: 'runtime_or_ui_fix',
+      reason: 'Diagnosis is confident enough for a scoped product-code patch.',
+      targetFiles: ['src/users.js'],
+      verificationPlan: ['Run syntax checks.'],
     },
   };
 }
@@ -200,4 +207,57 @@ test('openVerifiedPR refuses when no verification checks were recorded', async (
   assert.equal(result.ok, false);
   assert.equal(called, false);
   assert.match(result.error ?? '', /no verification checks/i);
+});
+
+test('createDirectGitHubPR creates new artifact files without an existing content sha', async () => {
+  const originalFetch = globalThis.fetch;
+  const putBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input.toString();
+    const method = init?.method ?? 'GET';
+    if (method === 'GET' && /\/repos\/ibrolord\/lite-annotate-demo$/.test(url)) {
+      return Response.json({ default_branch: 'main' });
+    }
+    if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+      return Response.json({ object: { sha: 'base-sha' } });
+    }
+    if (method === 'POST' && /\/git\/refs$/.test(url)) {
+      return Response.json({ ref: 'refs/heads/chore/artifact-test' });
+    }
+    if (method === 'GET' && /\/contents\/\.lite-annotate\/autofix\/new\.md\?ref=main$/.test(url)) {
+      return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
+    }
+    if (method === 'PUT' && /\/contents\/\.lite-annotate\/autofix\/new\.md$/.test(url)) {
+      putBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ content: { path: '.lite-annotate/autofix/new.md' } });
+    }
+    if (method === 'POST' && /\/pulls$/.test(url)) {
+      return Response.json({ html_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/3' });
+    }
+    return new Response(`unexpected ${method} ${url}`, { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await createDirectGitHubPR({
+      repoUrl: 'https://github.com/ibrolord/lite-annotate-demo',
+      token: 'ghs_test',
+      payload: {
+        title: 'chore: add autofix artifact',
+        body: 'artifact',
+        branch: 'chore/artifact-test',
+        files: [{
+          path: '.lite-annotate/autofix/new.md',
+          content: '# New artifact\n',
+          explanation: 'Add fallback artifact.',
+        }],
+      },
+    });
+
+    assert.equal(result.pr_url, 'https://github.com/ibrolord/lite-annotate-demo/pull/3');
+    assert.deepEqual(result.files, ['.lite-annotate/autofix/new.md']);
+    assert.equal(putBodies.length, 1);
+    assert.equal(Object.hasOwn(putBodies[0], 'sha'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

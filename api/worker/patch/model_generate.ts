@@ -8,6 +8,7 @@ export interface CodePatchGeneratorInput {
   candidates: RankedCandidateFile[];
   index?: CodeIndex;
   allowRepoFileSelection?: boolean;
+  customInstructions?: string;
 }
 
 export type CodePatchGenerator = (input: CodePatchGeneratorInput) => Promise<GeneratedPatch>;
@@ -153,6 +154,11 @@ function promptFor(input: CodePatchGeneratorInput): string {
     '',
     'Diagnosis JSON:',
     safeJson(input.diagnosis),
+    '',
+    'Custom Auto-Fix instructions:',
+    input.customInstructions?.trim()
+      ? truncate(input.customInstructions.trim(), 2_000)
+      : 'None provided.',
     '',
     input.allowRepoFileSelection ? 'Whole repo manifest:' : 'Ranked context manifest:',
     input.allowRepoFileSelection ? repoManifest(input) : input.candidates.slice(0, MAX_CONTEXT_FILES).map((candidate) => `- ${candidate.path}: ${candidate.reasons.join('; ')}`).join('\n'),

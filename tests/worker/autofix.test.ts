@@ -155,7 +155,7 @@ const report = {
   network: [{ method: 'GET', url: '/api/users/999', status: 404 }],
 };
 
-test('runAutofix runs Person B pipeline and skips PR without GitHub credentials', async () => {
+test('runAutofix returns an external blocker after verification when GitHub credentials are missing', async () => {
   const root = makeRepo();
   try {
     const result = await runAutofix('bug_123', report, {
@@ -164,7 +164,8 @@ test('runAutofix runs Person B pipeline and skips PR without GitHub credentials'
       githubRepo: undefined,
     });
 
-    assert.equal(result.status, 'verified_no_pr');
+    assert.equal(result.status, 'external_blocker');
+    assert.match(result.prError ?? '', /GitHub credentials|repository/i);
     assert.equal(result.pipeline.candidates[0]?.path, 'src/users.js');
     assert.equal(result.pipeline.diagnosis.targetFiles[0], 'src/users.js');
     assert.equal(result.pipeline.verification?.ok, true);
@@ -225,11 +226,35 @@ test('runAutofix dry run verifies but does not call GitHub PR creation', async (
   }
 });
 
-test('runAutofix skips PR with a clear no-change reason when patch content already matches', async () => {
+test('runAutofix returns an external blocker when verified PR creation fails', async () => {
+  const root = makeRepo();
+  try {
+    const result = await runAutofix('bug_pr_creation_outage', report, {
+      workspacePath: root,
+      githubToken: 'ghs_test',
+      githubRepo: 'ibrolord/lite-annotate-demo',
+      createPR: async () => {
+        throw new Error('GitHub outage while opening PR');
+      },
+    });
+
+    assert.equal(result.status, 'external_blocker');
+    assert.equal(result.artifact.type, 'fix_pr');
+    assert.equal(result.pipeline.verification?.ok, true);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/users.js']);
+    assert.equal(result.pr, null);
+    assert.match(result.prError ?? '', /GitHub outage/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix opens a fallback artifact PR when the product-code patch is already present', async () => {
   const root = makeCommerceRepo();
   try {
-    let calls = 0;
-    const prStages: string[] = [];
+    let prTitle = '';
+    let prFiles: string[] = [];
+    const patchStageLogs: string[] = [];
     const result = await runAutofix('bug_checkout_button_already_blue', {
       title: 'Checkout button should be blue',
       description: 'On /checkout, the Place demo order primary button should use a blue background.',
@@ -259,22 +284,30 @@ test('runAutofix skips PR with a clear no-change reason when patch content alrea
           files: [{ path: 'src/styles.css', content: styles.file.content }],
         };
       },
-      createPR: async () => {
-        calls += 1;
-        throw new Error('no-change patch should not create PR');
+      createPR: async (input) => {
+        prTitle = input.payload.title;
+        prFiles = input.payload.files.map((file) => file.path);
+        return {
+          pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/11',
+          branch: input.payload.branch,
+          files: prFiles,
+          write_mode: 'direct_files',
+        };
       },
       onStage: async (stage) => {
-        if (stage.key === 'pr' && stage.detail) prStages.push(stage.detail);
+        if (stage.key === 'patch' && stage.logs) patchStageLogs.push(...stage.logs);
       },
     });
 
-    assert.equal(result.status, 'verified_no_pr');
-    assert.equal(calls, 0);
-    assert.equal(result.pr, null);
+    assert.equal(result.status, 'pr_opened');
+    assert.equal(result.pr?.pr_url, 'https://github.com/ibrolord/lite-annotate-demo/pull/11');
     assert.equal(result.prError, undefined);
+    assert.equal(result.artifact.type, 'regression_test_pr');
+    assert.match(prTitle, /^test:/);
+    assert.match(prFiles[0] ?? '', /^tests\/lite-annotate-autofix\//);
     assert.equal(result.pipeline.verification?.ok, true);
-    assert.deepEqual(result.pipeline.verification?.modifiedFiles, []);
-    assert.ok(prStages.some((detail) => /No repository changes were produced/.test(detail)));
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, prFiles);
+    assert.ok(patchStageLogs.some((detail) => /No repository changes were produced/.test(detail)));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -283,11 +316,23 @@ test('runAutofix skips PR with a clear no-change reason when patch content alrea
 test('runAutofix opens PR with only verified modified files when model returns a partial no-op patch', async () => {
   const root = makeCommerceRepo();
   try {
+    writeFileSync(
+      join(root, 'index.html'),
+      `<main>
+  <form id="checkout-form" class="checkout-form">
+    <button class="button button-primary">Place demo order</button>
+  </form>
+</main>
+`
+    );
     let prFiles: string[] = [];
     const prStageLogs: string[] = [];
+    let expectedPrFiles: string[] = [];
+    let expectedPatchFiles: string[] = [];
+    let expectedSkippedFile = '';
     const result = await runAutofix('bug_checkout_partial_noop', {
-      title: 'Checkout button should be blue',
-      description: 'On /checkout, the checkout CTA style and supporting script should be updated.',
+      title: 'Checkout form layout overlaps',
+      description: 'On /checkout, the checkout CTA layout overlaps the surrounding form controls.',
       url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
       route: '/checkout',
       annotation: {
@@ -303,18 +348,23 @@ test('runAutofix opens PR with only verified modified files when model returns a
       githubToken: 'ghs_test',
       githubRepo: 'ibrolord/lite-annotate-demo',
       runPackageScripts: false,
-      codePatchGenerator: async ({ candidates }) => {
-        const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
-        const app = candidates.find((candidate) => candidate.path === 'src/app.js');
-        assert.ok(styles);
-        assert.ok(app);
+      codePatchGenerator: async ({ candidates, diagnosis }) => {
+        assert.equal(diagnosis.targetFiles.length, 2);
+        const [unchangedPath, changedPath] = diagnosis.targetFiles;
+        const unchanged = candidates.find((candidate) => candidate.path === unchangedPath);
+        const changed = candidates.find((candidate) => candidate.path === changedPath);
+        assert.ok(unchanged);
+        assert.ok(changed);
+        expectedSkippedFile = unchangedPath;
+        expectedPrFiles = [changedPath];
+        expectedPatchFiles = [unchangedPath, changedPath];
         return {
           ok: true,
           source: 'llm',
           model: 'test-model',
           files: [
-            { path: 'src/styles.css', content: styles.file.content },
-            { path: 'src/app.js', content: `${app.file.content}\nexport const __annotateAutofixMarker = true;\n` },
+            { path: unchangedPath, content: unchanged.file.content },
+            { path: changedPath, content: `${changed.file.content}\n/* Lite Annotate verified layout artifact */\n` },
           ],
         };
       },
@@ -333,10 +383,13 @@ test('runAutofix opens PR with only verified modified files when model returns a
     });
 
     assert.equal(result.status, 'pr_opened');
-    assert.deepEqual(prFiles, ['src/app.js']);
-    assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), ['src/styles.css', 'src/app.js']);
-    assert.deepEqual(result.pipeline.verification?.modifiedFiles, ['src/app.js']);
-    assert.ok(prStageLogs.some((line) => /skipped no-op patch files: src\/styles\.css/.test(line)));
+    assert.deepEqual(prFiles, expectedPrFiles);
+    assert.deepEqual(result.pipeline.patch.files.map((file) => file.path), expectedPatchFiles);
+    assert.deepEqual(result.pipeline.verification?.modifiedFiles, expectedPrFiles);
+    assert.deepEqual(result.artifact.targetFiles, expectedPrFiles);
+    assert.deepEqual(result.pr?.artifact_metadata?.target_files, expectedPrFiles);
+    assert.deepEqual(result.pr?.artifact_metadata?.modified_files, expectedPrFiles);
+    assert.ok(prStageLogs.some((line) => line.includes(`skipped no-op patch files: ${expectedSkippedFile}`)));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -367,6 +420,7 @@ test('runAutofix targets the DOM state owner for a stray cart count report', asy
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
       codePatchGenerator: async ({ candidates, diagnosis }) => {
         const app = candidates.find((candidate) => candidate.path === 'src/app.js');
@@ -401,14 +455,91 @@ test('runAutofix targets the DOM state owner for a stray cart count report', asy
   }
 });
 
-test('runAutofix rejects report-provided repos when PR credentials lack a trusted repo', async () => {
-  await assert.rejects(
-    () => runAutofix('bug_untrusted_repo', { ...report, repo: 'ibrolord/untrusted-demo' }, {
+test('runAutofix refuses model target drift from DOM owner to static markup', async () => {
+  const root = makeCommerceRepo();
+  try {
+    writeFileSync(
+      join(root, 'index.html'),
+      `<header class="site-header">
+  <nav class="main-nav">
+    <a href="/cart" data-route-link>Cart <span id="nav-cart-count">0</span></a>
+  </nav>
+</header>
+<script type="module" src="/src/app.js"></script>
+`
+    );
+
+    let prFiles: string[] = [];
+    const result = await runAutofix('bug_cart_zero_wrong_model_file', {
+      title: 'this is a typo, why does it say cart 0 instead of cart',
+      description: 'The nav should say Cart when the cart is empty, not Cart 0.',
+      url: 'https://lite-annotate-commerce-demo.vercel.app/',
+      route: '/',
+      annotation: {
+        target: 'a:Cart 0',
+        selector: 'body > header.site-header > nav.main-nav > a',
+        route: '/',
+      },
+      console: [],
+      network: [],
+      session: [
+        { type: 'click', target: 'button:Report a bug with technical context' },
+        { type: 'click', target: 'a:Cart 0' },
+      ],
+    }, {
+      workspacePath: root,
       githubToken: 'ghs_test',
-      githubRepo: undefined,
-    }),
-    /AUTOFIX_ALLOWED_REPOS|TARGET_REPO\/GITHUB_REPO/
-  );
+      githubRepo: 'ibrolord/lite-annotate-demo',
+      runPackageScripts: false,
+      codePatchGenerator: async ({ diagnosis, index }) => {
+        assert.deepEqual(diagnosis.targetFiles, ['src/app.js']);
+        const html = index?.files.find((file) => file.path === 'index.html');
+        assert.ok(html);
+        return {
+          ok: true,
+          source: 'llm',
+          model: 'test-model',
+          summary: 'Remove the static cart count from markup.',
+          files: [{
+            path: 'index.html',
+            content: html.content.replace(
+              'Cart <span id="nav-cart-count">0</span>',
+              'Cart <span id="nav-cart-count"></span>'
+            ),
+          }],
+        };
+      },
+      createPR: async (input) => {
+        prFiles = input.payload.files.map((file) => file.path);
+        return {
+          pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/10',
+          branch: input.payload.branch,
+          files: prFiles,
+          write_mode: 'direct_files',
+        };
+      },
+    });
+
+    assert.equal(result.status, 'pr_opened');
+    assert.equal(result.pipeline.artifact.type, 'regression_test_pr');
+    assert.match(result.pipeline.diagnosis.rootCause, /target drift|fallback/i);
+    assert.match(result.pipeline.patch.files[0]?.path ?? '', /^tests\/lite-annotate-autofix\//);
+    assert.deepEqual(prFiles, result.pipeline.patch.files.map((file) => file.path));
+    assert.ok(!prFiles.includes('index.html'));
+    assert.ok(!prFiles.includes('src/app.js'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runAutofix returns an external blocker when PR credentials lack a trusted repo', async () => {
+  const result = await runAutofix('bug_untrusted_repo', { ...report, repo: 'ibrolord/untrusted-demo' }, {
+    githubToken: 'ghs_test',
+    githubRepo: undefined,
+  });
+  assert.equal(result.status, 'external_blocker');
+  assert.equal(result.artifact.type, 'external_blocker');
+  assert.match(result.prError ?? '', /AUTOFIX_ALLOWED_REPOS|TARGET_REPO\/GITHUB_REPO/);
 });
 
 test('runAutofix allows report-provided repos that match the server allowlist', async () => {
@@ -474,6 +605,7 @@ test('runAutofix fixes the Cedar & Sail loyalty crash with focused verification'
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
     });
 
@@ -514,6 +646,7 @@ test('runAutofix verifies the Cedar & Sail loyalty crash when repo HEAD is alrea
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
     });
 
@@ -563,6 +696,7 @@ test('runAutofix uses the report repo before hosted env repo defaults', async ()
       workspaceRoot,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
     });
 
@@ -602,6 +736,7 @@ test('runAutofix fixes the Cedar & Sail checkout button color report with focuse
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
       codePatchGenerator: async ({ candidates, diagnosis }) => {
         const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
@@ -656,6 +791,7 @@ test('runAutofix does not run the profile smoke command for visual ecommerce rep
       workspacePath: root,
       githubToken: undefined,
       githubRepo: undefined,
+      skipPR: true,
       runPackageScripts: false,
       codePatchGenerator: async ({ candidates, diagnosis }) => {
         const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');

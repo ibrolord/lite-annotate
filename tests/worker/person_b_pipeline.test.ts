@@ -111,7 +111,9 @@ test('runPersonBPipeline can use a model patch generator for visual UI fixes', a
         },
       },
       runPackageScripts: false,
-      codePatchGenerator: async ({ diagnosis, candidates }) => {
+      customInstructions: 'Keep the existing hero wording and only adjust CSS sizing.',
+      codePatchGenerator: async ({ diagnosis, candidates, customInstructions }) => {
+        assert.equal(customInstructions, 'Keep the existing hero wording and only adjust CSS sizing.');
         const styles = candidates.find((candidate) => candidate.path === 'src/styles.css');
         assert.ok(styles);
         assert.ok(diagnosis.targetFiles.includes('src/styles.css'));
@@ -197,9 +199,12 @@ test('runPersonBPipeline does not let the model upgrade an unpatchable diagnosis
     });
 
     assert.equal(called, false);
-    assert.equal(result.diagnosis.shouldPatch, false);
-    assert.equal(result.patch.ok, false);
-    assert.equal(result.verification, null);
+    assert.equal(result.patch.ok, true);
+    assert.equal(result.patch.artifactType, 'regression_test_pr');
+    assert.equal(result.artifact.type, 'regression_test_pr');
+    assert.match(result.diagnosis.targetFiles[0] ?? '', /^tests\/lite-annotate-autofix\//);
+    assert.equal(result.verification?.ok, true);
+    assert.ok(result.verification?.commands.some((command) => command.name.startsWith('node --check tests/lite-annotate-autofix/')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -269,6 +274,48 @@ test('runPersonBPipeline honors explicit color reports despite noisy console sta
     assert.match(result.diagnosis.rootCause, /noisy stack trace/);
     assert.equal(result.patch.ok, true);
     assert.equal(result.verification?.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runPersonBPipeline converts failed direct patch verification into a verified fallback artifact', async () => {
+  const root = makeRepo();
+  try {
+    const result = await runPersonBPipeline({
+      workspacePath: root,
+      report: {
+        title: 'Checkout button should be purple',
+        description: 'The Place demo order button should use a purple background and needs a regression record if the code patch fails verification.',
+        url: 'https://lite-annotate-commerce-demo.vercel.app/checkout',
+        route: '/checkout',
+        annotation: {
+          target: 'button: Place demo order',
+          selector: '.button-primary',
+        },
+      },
+      runPackageScripts: false,
+      codePatchGenerator: async () => ({
+        ok: true,
+        source: 'llm',
+        model: 'bad-css-model',
+        files: [{
+          path: 'src/styles.css',
+          content: `.button-primary {\n  background: #7c3aed;\n`,
+        }],
+      }),
+    });
+
+    assert.equal(result.patch.ok, true);
+    assert.equal(result.patch.artifactType, 'regression_test_pr');
+    assert.equal(result.artifact.type, 'regression_test_pr');
+    assert.match(result.diagnosis.rootCause, /Direct patch was blocked/i);
+    assert.match(result.diagnosis.evidence.join('\n'), /css sanity src\/styles\.css failed/i);
+    assert.match(result.diagnosis.targetFiles[0] ?? '', /^tests\/lite-annotate-autofix\//);
+    assert.equal(result.verification?.ok, true);
+    assert.deepEqual(result.verification?.modifiedFiles, result.diagnosis.targetFiles);
+    assert.equal(result.verification?.commands.some((command) => command.name === 'npm run test'), false);
+    assert.ok(result.verification?.commands.some((command) => command.name.startsWith('node --check tests/lite-annotate-autofix/')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
