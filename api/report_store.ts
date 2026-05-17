@@ -2,11 +2,13 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LiteReport } from './report_contract.js';
 import type { StoredGStackReviewRecord } from './gstack_runner.js';
+import type { ReportTriage } from './triage.js';
 
 export interface StoredReportRecord {
   report: LiteReport;
   raw: unknown;
   memory?: unknown;
+  triage?: ReportTriage;
   autofix?: StoredAutofixRecord;
   gstackReview?: StoredGStackReviewRecord;
   updatedAt: string;

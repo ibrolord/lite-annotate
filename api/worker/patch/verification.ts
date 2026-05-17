@@ -73,6 +73,10 @@ function isHtmlPath(path: string): boolean {
   return /\.(?:html)$/i.test(path);
 }
 
+function isMarkdownPath(path: string): boolean {
+  return /\.(?:md|mdx)$/i.test(path);
+}
+
 function inlineCheck(name: string, check: () => string): VerificationCommandResult {
   try {
     return { name, ok: true, stdout: check(), stderr: '' };
@@ -113,6 +117,13 @@ function validateHtml(path: string, content: string): string {
   assertNoConflictMarkers(path, content);
   checkBalancedDelimiters(path, content, '<', '>');
   return 'HTML sanity check passed';
+}
+
+function validateMarkdown(path: string, content: string): string {
+  assertNoConflictMarkers(path, content);
+  if (!content.trim()) throw new Error(`${path} is empty`);
+  if (!/^#\s+/m.test(content)) throw new Error(`${path} must include a heading`);
+  return 'Markdown sanity check passed';
 }
 
 function validateTypeScript(path: string, content: string): string {
@@ -242,6 +253,16 @@ export function verifyStructuredPatch(input: StructuredPatchVerificationInput): 
     const absolutePath = resolveInside(workspacePath, file);
     const content = absolutePath ? readFileSync(absolutePath, 'utf8') : '';
     const result = inlineCheck(`html sanity ${file}`, () => validateHtml(file, content));
+    commands.push(result);
+    if (!result.ok) {
+      return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };
+    }
+  }
+
+  for (const file of modifiedFiles.filter(isMarkdownPath)) {
+    const absolutePath = resolveInside(workspacePath, file);
+    const content = absolutePath ? readFileSync(absolutePath, 'utf8') : '';
+    const result = inlineCheck(`markdown sanity ${file}`, () => validateMarkdown(file, content));
     commands.push(result);
     if (!result.ok) {
       return { ok: false, modifiedFiles, commands, error: `${result.name} failed` };

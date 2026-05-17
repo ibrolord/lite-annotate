@@ -108,6 +108,8 @@ The capture path only needs the widget and Lite Annotate API. GBrain adds durabl
 | `GET /reports/:id/view` | Human-readable report detail with memory, diagnosis, and verification context. |
 | `GET /reports/:id/handoff` | Structured handoff payload for downstream agents or review tooling. |
 | `GET /reports/:id/memory` | Similar memory, memory impact, and receipt trail. |
+| `GET /reports/:id/triage` | Current evidence-only bug triage result. |
+| `POST /reports/:id/triage` | Fast LLM triage with deterministic fallback when model access is unavailable. |
 | `POST /reports/:id/autofix?dryRun=1` | Diagnosis and verification without PR creation. |
 | `POST /reports/:id/autofix` | Full autofix path with guarded PR creation when credentials and gates allow it. |
 | `POST /reports/:id/gstack/investigate` | Optional protected GStack investigation trigger. |
@@ -116,11 +118,12 @@ The capture path only needs the widget and Lite Annotate API. GBrain adds durabl
 
 1. **Normalize the report.** `POST /report` validates and normalizes the widget payload into the `LiteReport` contract.
 2. **Persist report and memory.** Reports are stored locally, with GBrain HTTP memory used when configured and markdown memory as a fallback.
-3. **Build repo context.** The worker clones or opens the target repo, indexes JavaScript and TypeScript files, and ranks likely candidates from route, stack, symbol, annotation, and test proximity signals.
-4. **Diagnose before patching.** Diagnosis records severity, root cause, evidence, target files, fix strategy, confidence, and whether a patch is justified.
-5. **Generate a scoped patch.** Deterministic patching is used where available. A configured OpenAI-compatible code model can produce a bounded patch when local triage needs repo-wide file selection.
-6. **Verify locally.** Patches are applied in a temporary workspace and must pass syntax checks, package-script checks when enabled, and any supplied smoke commands.
-7. **Open a PR only after gates pass.** GitHub PR creation is skipped unless verification succeeds and credentials are configured.
+3. **Triage the report.** A fast evidence-only Sonnet pass summarizes what the user reported, then writes Lite Annotate's own bug assessment from captured browser evidence. If model access is unavailable, Lite Annotate falls back to a deterministic browser-evidence heuristic.
+4. **Build repo context.** The worker clones or opens the target repo, indexes JavaScript and TypeScript files, and ranks likely candidates from route, stack, symbol, annotation, and test proximity signals.
+5. **Diagnose before patching.** Diagnosis records severity, root cause, evidence, target files, fix strategy, confidence, and whether a patch is justified.
+6. **Generate a patchability artifact.** Confident reports get scoped product-code patches; weaker but supported reports fall back to regression-test, instrumentation, or setup artifacts instead of diagnosis-only output.
+7. **Verify locally.** Patches are applied in a temporary workspace and must pass syntax checks, markdown/test sanity checks, package-script checks when enabled, and any supplied smoke commands.
+8. **Open a PR only after gates pass.** GitHub PR creation is skipped unless verification succeeds and credentials are configured; external setup/trust failures return explicit blocker metadata.
 
 ## Current Scope
 
@@ -129,8 +132,9 @@ Implemented:
 - Browser widget capture for annotation, console, network, session, browser, route, and screenshot fields.
 - Hono API for report intake, report storage, dashboard, report detail, memory, handoff, autofix, and GStack review routes.
 - GBrain-compatible memory with native HTTP integration and markdown fallback.
+- Fast evidence-only report triage that stays separate from repo-aware Auto-Fix.
 - JavaScript and TypeScript repo indexing with candidate ranking.
-- Structured diagnosis, deterministic and model-backed patch generation, local patch verification, and guarded GitHub PR creation.
+- Structured diagnosis, deterministic and model-backed patch generation, fallback patchability artifacts, local patch verification, and guarded GitHub PR creation.
 - Dry-run analysis for review without external PR actions.
 - Optional protected GStack runner integration for investigation, QA, review, and ship workflows.
 
@@ -186,6 +190,10 @@ GBRAIN_OAUTH_SCOPE="read write"
 
 OPENAI_API_KEY=<token for model-backed patch generation>
 OPENAI_BASE_URL=https://api.openai.com/v1
+ANTHROPIC_API_KEY=<token for fast Sonnet triage>
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+TRIAGE_MODEL=claude-sonnet-4-6
+TRIAGE_TIMEOUT_MS=8000
 AUTOFIX_CODE_MODEL=gpt-5.3-codex-spark
 AUTOFIX_DISABLE_LLM_PATCH=true|false
 AUTOFIX_RUN_PACKAGE_SCRIPTS=true|false

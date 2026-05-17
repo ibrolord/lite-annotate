@@ -223,7 +223,7 @@ Every generated PR must pass these gates before the branch is pushed:
 5. Syntax/build/test or bug-specific smoke check passes.
 ```
 
-If any gate fails, the worker must return diagnosis-only output and skip PR creation.
+If the direct product-code gate fails for a supported report, the worker must still return a verified patchability artifact: a regression test, instrumentation note, or setup artifact. Only external setup, trust, credential, or repository access failures may return an `external_blocker` result.
 
 ### Candidate File Ranking
 
@@ -287,6 +287,7 @@ The worker must:
 - Refuse broad edits unless explicitly approved.
 - Avoid secrets, `.env` files, lockfiles, generated files, and unrelated refactors.
 - Apply the patch in a temporary clone before creating any branch on GitHub.
+- When a safe product-code patch is not proven, create a repo-local `tests/lite-annotate-autofix/` regression artifact or `.lite-annotate/autofix/` instrumentation/setup artifact and verify that artifact before any PR gate.
 
 ### Verification
 
@@ -502,7 +503,7 @@ For the current implementation:
 - Diagnosis names the missing null/not-found guard.
 - Patch modifies only `src/users.js`.
 - Patch passes syntax and bug-specific smoke verification before push.
-- PR opens only after verification, or diagnosis-only fallback is clear.
+- PR opens only after verification, or Auto-Fix returns a verified regression/instrumentation/setup artifact or an explicit external blocker.
 
 For product direction:
 

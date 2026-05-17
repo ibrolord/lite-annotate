@@ -19,6 +19,7 @@ export interface GitHubPRResult {
   branch: string;
   files: string[];
   write_mode: 'direct_files';
+  artifact_metadata?: Record<string, unknown>;
 }
 
 export interface PRGateReport {
@@ -66,6 +67,12 @@ function titleFor(report: PRGateReport): string {
   return `fix: ${concise}`;
 }
 
+function titlePrefix(pipeline: PersonBPipelineResult): string {
+  if (pipeline.artifact.type === 'regression_test_pr') return 'test';
+  if (pipeline.artifact.type === 'instrumentation_pr' || pipeline.artifact.type === 'setup_pr') return 'chore';
+  return 'fix';
+}
+
 function commandBlock(pipeline: PersonBPipelineResult): string {
   const commands = pipeline.verification?.commands ?? [];
   if (commands.length === 0) return 'No verification commands were recorded.';
@@ -92,6 +99,11 @@ ${report.url ? `\nURL: ${report.url}` : ''}
 ${report.route ? `\nRoute: ${report.route}` : ''}
 ${report.description ? `\n\n${report.description}` : ''}
 
+## Auto-Fix artifact
+Type: \`${pipeline.artifact.type}\`
+
+${pipeline.artifact.reason}
+
 ## Root cause
 ${pipeline.diagnosis.rootCause}
 
@@ -108,15 +120,16 @@ ${pipeline.verification?.modifiedFiles.map((file) => `- ${file}`).join('\n') || 
 ${commandBlock(pipeline)}
 
 ## Residual risk
-This PR was opened only after the local Person B verification gate passed. Review the fallback behavior for product copy before merging.`;
+This PR was opened only after the local Person B verification gate passed. Review the artifact type before merging.`;
 }
 
 function buildPayload(options: OpenVerifiedPROptions): PRPayload {
   const { pipeline, report } = options;
+  const prefix = titlePrefix(pipeline);
   return {
-    title: titleFor(report),
+    title: titleFor(report).replace(/^fix:/, `${prefix}:`),
     body: buildPRBody(options),
-    branch: `fix/${slug(report.title ?? pipeline.diagnosis.targetFiles.join('-'))}`,
+    branch: `${prefix}/${slug(report.title ?? pipeline.diagnosis.targetFiles.join('-'))}`,
     baseBranch: options.baseBranch,
     files: pipeline.patch.files.map((file) => ({
       path: file.path,
@@ -184,19 +197,25 @@ export async function createDirectGitHubPR(params: {
 
   const committedFiles: string[] = [];
   for (const file of params.payload.files) {
-    const existing = await githubJson<{ sha: string }>(
-      `${base}/contents/${encodePath(file.path)}?ref=${encodeURIComponent(baseBranch)}`,
-      { headers }
-    );
+    const contentUrl = `${base}/contents/${encodePath(file.path)}?ref=${encodeURIComponent(baseBranch)}`;
+    const existingResponse = await fetch(contentUrl, { headers });
+    if (!existingResponse.ok && existingResponse.status !== 404) {
+      const body = await existingResponse.text().catch(() => '');
+      throw new Error(`GitHub request failed: ${existingResponse.status} ${body.slice(0, 200)}`);
+    }
+    const existing = existingResponse.status === 404
+      ? null
+      : await existingResponse.json() as { sha: string };
+    const body: Record<string, unknown> = {
+      message: params.payload.title,
+      content: Buffer.from(file.content).toString('base64'),
+      branch,
+    };
+    if (existing?.sha) body.sha = existing.sha;
     await githubJson(`${base}/contents/${encodePath(file.path)}`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({
-        message: params.payload.title,
-        content: Buffer.from(file.content).toString('base64'),
-        sha: existing.sha,
-        branch,
-      }),
+      body: JSON.stringify(body),
     });
     committedFiles.push(file.path);
   }
@@ -221,12 +240,20 @@ export async function createDirectGitHubPR(params: {
 }
 
 function validatePRGate(pipeline: PersonBPipelineResult): string | null {
-  const topThree = new Set(pipeline.candidates.slice(0, 3).map((candidate) => candidate.path));
-  const targetInTopThree = pipeline.diagnosis.targetFiles.every((file) => topThree.has(file));
-  if (!targetInTopThree) return 'PR gate failed: every target file must be in the top 3 candidates.';
+  if (pipeline.artifact.type === 'external_blocker') {
+    return `PR gate failed: ${pipeline.artifact.blocker ?? 'external blocker'}`;
+  }
 
-  if (pipeline.diagnosis.confidence < 0.75) {
-    return 'PR gate failed: diagnosis confidence is below 0.75.';
+  if (pipeline.artifact.type === 'fix_pr') {
+    const topThree = new Set(pipeline.candidates.slice(0, 3).map((candidate) => candidate.path));
+    const targetInTopThree = pipeline.diagnosis.targetFiles.every((file) => topThree.has(file));
+    if (!targetInTopThree) return 'PR gate failed: every target file must be in the top 3 candidates.';
+
+    if (pipeline.diagnosis.confidence < 0.75) {
+      return 'PR gate failed: diagnosis confidence is below 0.75.';
+    }
+  } else if (!pipeline.diagnosis.targetFiles.every((file) => file.startsWith('.lite-annotate/') || file.startsWith('tests/'))) {
+    return `PR gate failed: ${pipeline.artifact.type} must write to .lite-annotate/ or tests/.`;
   }
   if (pipeline.diagnosis.targetFiles.length > 2) {
     return 'PR gate failed: diagnosis targets more than 2 files.';

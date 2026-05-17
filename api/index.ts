@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createMemoryAdapter, type MemoryAdapter, type MemorySearchResult } from './gbrain.js';
+import { createMemoryAdapter, type MemoryAdapter, type MemoryEntry, type MemorySearchResult } from './gbrain.js';
 import {
   createRemoteGStackReview,
   requireInternalToken,
@@ -15,15 +15,18 @@ import {
 } from './gstack_runner.js';
 import { normalizeReportPayload, ReportValidationError } from './report_contract.js';
 import { ReportStore, type StoredReportRecord } from './report_store.js';
+import { runReportTriage, type ReportTriage } from './triage.js';
 import type { LiteReport } from './report_contract.js';
 import type { AutofixStageEvent, AutofixStageReporter } from './worker/person_b_pipeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 const CUSTOMER_DEMO_URL = 'https://lite-annotate-commerce-demo.vercel.app';
+const MAX_AUTOFIX_INSTRUCTIONS_CHARS = 4_000;
 
 interface AutofixRunnerContext {
   dryRun: boolean;
+  customInstructions?: string;
   onStage?: AutofixStageReporter;
 }
 
@@ -41,10 +44,43 @@ const AUTOFIX_STAGE_DEFS: Array<{ key: AutofixStageKey; label: string; pendingDe
   { key: 'pr', label: 'PR gate', pendingDetail: 'Opens a PR only if credentials and gates pass.' },
 ];
 
+function memoryEntryLabel(entry: MemoryEntry): string {
+  if (entry.provider === 'gbrain' && entry.status === 'written') return 'GBrain';
+  if (entry.status === 'fallback-written') return 'markdown fallback';
+  if (entry.provider === 'github-markdown') return 'markdown memory';
+  return entry.provider;
+}
+
+function memoryWriteStageSummary(diagnosis: MemoryEntry, outcome: MemoryEntry): { detail: string; logs: string[] } {
+  const logs = [
+    `diagnosis memory: provider=${diagnosis.provider} status=${diagnosis.status}${diagnosis.path ? ` path=${diagnosis.path}` : ''}`,
+    `outcome memory: provider=${outcome.provider} status=${outcome.status}${outcome.path ? ` path=${outcome.path}` : ''}`,
+    ...(diagnosis.fallbackReason ? [`diagnosis fallback: ${diagnosis.fallbackReason}`] : []),
+    ...(outcome.fallbackReason ? [`outcome fallback: ${outcome.fallbackReason}`] : []),
+  ];
+
+  if (diagnosis.provider === 'gbrain' && diagnosis.status === 'written' && outcome.provider === 'gbrain' && outcome.status === 'written') {
+    return { detail: 'Diagnosis and outcome memory stored in GBrain.', logs };
+  }
+
+  if (diagnosis.status === 'fallback-written' || outcome.status === 'fallback-written') {
+    return { detail: 'Diagnosis and outcome memory stored in markdown fallback after GBrain write fallback.', logs };
+  }
+
+  const diagnosisLabel = memoryEntryLabel(diagnosis);
+  const outcomeLabel = memoryEntryLabel(outcome);
+  if (diagnosisLabel === outcomeLabel) {
+    return { detail: `Diagnosis and outcome memory stored in ${diagnosisLabel}.`, logs };
+  }
+
+  return { detail: `Diagnosis memory stored in ${diagnosisLabel}; outcome memory stored in ${outcomeLabel}.`, logs };
+}
+
 export function createApp(deps: {
   store?: ReportStore;
   memory?: MemoryAdapter;
   autofixRunner?: (reportId: string, report: LiteReport, context: AutofixRunnerContext) => Promise<unknown>;
+  triageRunner?: (report: LiteReport) => Promise<ReportTriage>;
 } = {}) {
   const app = new Hono();
   const store = deps.store ?? new ReportStore();
@@ -56,9 +92,11 @@ export function createApp(deps: {
       return runAutofix(reportId, report as unknown as Parameters<typeof runAutofix>[1], {
         skipPR: context.dryRun,
         runPackageScripts: context.dryRun ? false : undefined,
+        customInstructions: context.customInstructions,
         onStage: context.onStage,
       });
     });
+  const triageRunner = deps.triageRunner ?? runReportTriage;
 
   app.use('*', cors());
 
@@ -189,13 +227,14 @@ export function createApp(deps: {
       memoryImpact,
       agentComparison,
       memoryReceipts,
+      triage: record.triage ?? null,
       autofix: record.autofix ?? null,
     });
   });
 
   app.get('/reports/:id/view', async (c) => {
     const record = await store.get(c.req.param('id'));
-    if (!record) return c.html('<h1>Report not found</h1>', 404);
+    if (!record) return c.html(render404Html(c.req.param('id')), 404);
     const similar = await memory.searchSimilar(record.report);
     const memoryImpact = buildMemoryImpact(record.report, record.memory, similar, record.autofix ?? null);
     const agentComparison = buildAgentComparison(memoryImpact, record.autofix ?? null);
@@ -209,9 +248,60 @@ export function createApp(deps: {
       memoryImpact,
       agentComparison,
       memoryReceipts,
+      record.triage ?? null,
       record.autofix ?? null,
       record.gstackReview ?? null
     ));
+  });
+
+  app.get('/reports/:id/triage', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+    return c.json({ reportId: record.report.id, triage: record.triage ?? null });
+  });
+
+  app.post('/reports/:id/triage', async (c) => {
+    const record = await store.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'not_found' }, 404);
+
+    try {
+      const triage = await triageRunner(record.report);
+      const updated = await store.update(record.report.id, (current) => ({
+        ...current,
+        triage,
+        updatedAt: new Date().toISOString(),
+      }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
+      }
+      return c.json({ reportId: record.report.id, triage: updated?.triage ?? triage });
+    } catch (err) {
+      const triage: ReportTriage = {
+        verdict: 'needs_more_info',
+        confidence: 'low',
+        isRealBug: false,
+        userSummary: `${record.report.title}${record.report.description ? `: ${record.report.description}` : ''}`,
+        agentReport: 'Lite Annotate could not complete triage, so this report needs manual review before Auto-Fix.',
+        headline: 'Triage could not complete',
+        rationale: errorMessage(err),
+        evidence: ['The triage runner failed before returning a verdict.'],
+        nextAction: 'ask_reporter',
+        source: 'heuristic',
+        model: 'triage-runner',
+        latencyMs: 0,
+        createdAt: new Date().toISOString(),
+        error: errorMessage(err),
+      };
+      await store.update(record.report.id, (current) => ({
+        ...current,
+        triage,
+        updatedAt: new Date().toISOString(),
+      }));
+      if (requestPrefersHtml(c.req.raw)) {
+        return c.redirect(`/reports/${encodeURIComponent(record.report.id)}/view#triage-result`, 303);
+      }
+      return c.json({ reportId: record.report.id, triage }, 500);
+    }
   });
 
   app.get('/reports/:id/autofix', async (c) => {
@@ -467,6 +557,7 @@ export function createApp(deps: {
     const record = await store.get(c.req.param('id'));
     if (!record) return c.json({ error: 'not_found' }, 404);
     const dryRun = isTruthyFlag(c.req.query('dryRun'));
+    const customInstructions = await readAutofixCustomInstructions(c.req.raw);
     let stageSnapshot = initialAutofixStages(dryRun);
     const updateAutofixStage = async (event: AutofixStageEvent) => {
       stageSnapshot = mergeAutofixStage(stageSnapshot, event);
@@ -476,6 +567,7 @@ export function createApp(deps: {
           ...(current.autofix ?? {}),
           status: 'running',
           mode: dryRun ? 'preview' : 'autofix',
+          customInstructions,
           stages: stageSnapshot,
           updatedAt: new Date().toISOString(),
         },
@@ -491,6 +583,7 @@ export function createApp(deps: {
         autofix: {
           status: 'running',
           mode: dryRun ? 'preview' : 'autofix',
+          customInstructions,
           stages: stageSnapshot,
           updatedAt: new Date().toISOString(),
         },
@@ -512,10 +605,16 @@ export function createApp(deps: {
         key: 'request',
         label: 'Request received',
         status: 'completed',
-        detail: dryRun ? 'Preview Auto-Fix started.' : 'Open PR with Auto-Fix started.',
+        detail: customInstructions
+          ? `${dryRun ? 'Preview Auto-Fix' : 'Open PR with Auto-Fix'} started with custom instructions.`
+          : dryRun ? 'Preview Auto-Fix started.' : 'Open PR with Auto-Fix started.',
         at: new Date().toISOString(),
       });
-      const result = await autofixRunner(record.report.id, record.report, { dryRun, onStage: updateAutofixStage });
+      const result = await autofixRunner(record.report.id, record.report, {
+        dryRun,
+        customInstructions,
+        onStage: updateAutofixStage,
+      });
       const autofixSummary = summarizeAutofixResult(result);
       await updateAutofixStage({
         key: 'memory',
@@ -524,24 +623,27 @@ export function createApp(deps: {
         detail: 'Writing diagnosis and outcome memory.',
         at: new Date().toISOString(),
       });
-      await memory.putDiagnosis(record.report.id, autofixSummary.diagnosis);
-      await memory.putOutcome(record.report.id, {
+      const diagnosisMemory = await memory.putDiagnosis(record.report.id, autofixSummary.diagnosis);
+      const outcomeMemory = await memory.putOutcome(record.report.id, {
         status: autofixSummary.status,
         pr: autofixSummary.pr,
         verification: autofixSummary.verification,
       });
+      const memoryStage = memoryWriteStageSummary(diagnosisMemory, outcomeMemory);
       const similar = await memory.searchSimilar(record.report);
       await updateAutofixStage({
         key: 'memory',
         label: 'Write memory',
         status: 'completed',
-        detail: 'Diagnosis and outcome memory stored.',
+        detail: memoryStage.detail,
+        logs: memoryStage.logs,
         at: new Date().toISOString(),
       });
       const stageRecord = await store.get(record.report.id);
       const stages = completeAutofixStages(readAutofixStages(stageRecord?.autofix), autofixSummary.status);
       const autofix = {
         ...autofixSummary,
+        customInstructions,
         stages,
         memoryImpact: buildMemoryImpact(record.report, record.memory, similar, autofixSummary),
       };
@@ -563,6 +665,7 @@ export function createApp(deps: {
       const autofix = {
         status: 'failed',
         error: errorMessage(err),
+        customInstructions,
         stages: failActiveAutofixStage(stageSnapshot, errorMessage(err)),
         updatedAt: new Date().toISOString(),
       };
@@ -602,9 +705,10 @@ export const app = createApp();
 function renderReportsDashboard(records: StoredReportRecord[]): string {
   const rows = records.map((record) => renderReportRow(record)).join('');
   const empty = records.length === 0
-    ? `<tr><td colspan="9" class="empty">No reports captured yet. Submit one from <a href="${CUSTOMER_DEMO_URL}">the demo</a>.</td></tr>`
+    ? `<tr><td colspan="10" class="empty">No reports captured yet. Submit one from <a href="${CUSTOMER_DEMO_URL}">the demo</a>.</td></tr>`
     : '';
   const readyCount = records.filter((record) => record.memory).length;
+  const triagedCount = records.filter((record) => record.triage).length;
   const analyzedCount = records.filter((record) => record.autofix).length;
 
   return `<!doctype html>
@@ -637,9 +741,10 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .button { display: inline-flex; min-height: 40px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 0 12px; background: var(--panel); color: var(--ink); font-size: 14px; font-weight: 650; }
     .button:hover { background: var(--soft); text-decoration: none; }
-    .queue-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
-    .summary-item { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 650; }
-    .summary-item strong { color: var(--ink); }
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 160px); gap: 12px; margin-bottom: 20px; }
+    .kpi-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px 12px; box-shadow: 0 2px 8px oklch(0.45 0.05 248 / .06); }
+    .kpi-card strong { display: block; font-size: 32px; font-weight: 760; line-height: 1; color: var(--ink); letter-spacing: -0.02em; }
+    .kpi-card span { display: block; font-size: 12px; font-weight: 650; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
     .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 30px oklch(0.45 0.05 248 / .08); }
     table { width: 100%; border-collapse: collapse; min-width: 980px; }
     th, td { padding: 12px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
@@ -649,6 +754,9 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
     .muted { color: var(--muted); }
     .pill { display: inline-flex; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 650; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); white-space: nowrap; }
     .pill.warn { background: oklch(0.96 0.04 75); color: oklch(0.39 0.1 70); border-color: oklch(0.84 0.09 75); }
+    .pill.neutral { background: oklch(0.94 0.008 248); color: oklch(0.40 0.015 248); border-color: oklch(0.82 0.012 248); }
+    .pill.info { background: oklch(0.94 0.05 258); color: oklch(0.38 0.12 258); border-color: oklch(0.80 0.09 258); }
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
     .links { display: flex; gap: 8px; flex-wrap: wrap; }
     .links a:first-child { font-weight: 750; }
     .empty { text-align: center; padding: 32px; color: var(--muted); }
@@ -672,11 +780,12 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
         <a class="button" href="/reports">JSON</a>
       </nav>
     </header>
-    <section class="queue-summary" aria-label="Queue summary">
-      <span class="summary-item"><strong>${records.length}</strong> captured</span>
-      <span class="summary-item"><strong>${readyCount}</strong> memory ready</span>
-      <span class="summary-item"><strong>${analyzedCount}</strong> analyzed</span>
-    </section>
+    <div class="kpi-row" aria-label="Queue summary">
+      <div class="kpi-card"><strong>${records.length}</strong><span>Captured</span></div>
+      <div class="kpi-card"><strong>${readyCount}</strong><span>Memory ready</span></div>
+      <div class="kpi-card"><strong>${triagedCount}</strong><span>Triaged</span></div>
+      <div class="kpi-card"><strong>${analyzedCount}</strong><span>Analyzed</span></div>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -687,6 +796,7 @@ function renderReportsDashboard(records: StoredReportRecord[]): string {
             <th>Annotation</th>
             <th>Context</th>
             <th>Memory</th>
+            <th>Triage</th>
             <th>Analysis</th>
             <th>GStack</th>
             <th>Links</th>
@@ -726,9 +836,10 @@ function renderReportRow(record: StoredReportRecord): string {
       <div class="muted">${escapeHtml(report.annotation.selector || 'No selector')}</div>
     </td>
     <td>${escapeHtml(context)}</td>
-    <td><span class="${memory.ok ? 'pill' : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
-    <td><span class="pill">${escapeHtml(analysisStatus(record.autofix))}</span></td>
-    <td><span class="pill">${escapeHtml(gstackStatus(record.gstackReview))}</span></td>
+    <td><span class="${memory.ok ? pillClass(memory.label) : 'pill warn'}">${escapeHtml(memory.label)}</span></td>
+    <td><span class="${pillClass(triageStatus(record.triage))}">${escapeHtml(triageStatus(record.triage))}</span></td>
+    <td><span class="${pillClass(analysisStatus(record.autofix))}">${escapeHtml(analysisStatus(record.autofix))}</span></td>
+    <td><span class="${pillClass(gstackStatus(record.gstackReview))}">${escapeHtml(gstackStatus(record.gstackReview))}</span></td>
     <td>
       <div class="links">
         <a href="/reports/${encodeURIComponent(report.id)}/view">Open report</a>
@@ -803,9 +914,40 @@ function renderReportHtml(
   memoryImpact: MemoryImpactSummary,
   agentComparison: AgentComparison,
   memoryReceipts: MemoryReceipt[],
+  triage: ReportTriage | null,
   autofix: unknown,
   gstackReview: unknown
 ): string {
+  const previousAutofixInstructions = autofixCustomInstructions(autofix);
+  const instructionsOpen = previousAutofixInstructions ? ' open' : '';
+  const networkEvent = primaryNetworkEvent(report);
+  const networkSummary = networkEvent
+    ? `${networkEvent.method} ${networkEvent.url} -> ${networkEvent.status ?? 'n/a'}`
+    : 'No network breadcrumb captured';
+  const consoleSummary = primaryConsoleMessage(report);
+  const autofixStatus = analysisStatus(autofix);
+  const decision = autofixStatus === 'pr_opened'
+    ? { tone: 'good', signal: 'PR opened', detail: 'Auto-Fix produced verified repo changes and opened a PR.' }
+    : autofixStatus === 'verified_no_pr'
+      ? { tone: 'good', signal: 'Verified locally', detail: 'Auto-Fix verified the report without opening a PR.' }
+      : autofixStatus === 'failed' || autofixStatus === 'external_blocker'
+        ? { tone: 'danger', signal: 'Blocked', detail: 'Auto-Fix needs attention before it can continue.' }
+        : triage?.verdict === 'real_bug' || triage?.nextAction === 'run_autofix'
+          ? { tone: 'warn', signal: 'Likely bug', detail: triage.headline || 'Triage found enough signal to run Auto-Fix.' }
+          : networkEvent || consoleSummary !== 'No console error captured'
+            ? { tone: 'warn', signal: 'Evidence captured', detail: 'The report includes browser evidence that should be reviewed.' }
+            : { tone: 'warn', signal: 'Needs review', detail: 'The report needs triage before code changes.' };
+  const actionCopy = autofixStatus === 'pr_opened'
+    ? { tone: 'good', label: 'Review PR', detail: 'A verified PR is ready for review.' }
+    : autofixStatus === 'verified_no_pr'
+      ? { tone: 'good', label: 'Review result', detail: 'Check the verified Auto-Fix result and decide whether another run is needed.' }
+      : autofixStatus === 'running'
+        ? { tone: 'warn', label: 'Wait for Auto-Fix', detail: 'The current Auto-Fix run is still active.' }
+        : autofixStatus === 'failed' || autofixStatus === 'external_blocker'
+          ? { tone: 'danger', label: 'Resolve blocker', detail: 'Open the Auto-Fix result for the blocking error.' }
+          : triage?.nextAction === 'run_autofix'
+            ? { tone: 'warn', label: 'Run Auto-Fix', detail: 'Use optional instructions if the fix needs constraints.' }
+            : { tone: 'warn', label: 'Triage first', detail: 'Run triage or preview Auto-Fix before opening a PR.' };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -837,18 +979,31 @@ function renderReportHtml(
     }
     main { max-width: 1240px; margin: 0 auto; padding: 26px 20px 72px; }
     h1 { font-size: 28px; line-height: 1.08; margin: 0 0 8px; letter-spacing: 0; max-width: 760px; }
-    h2 { margin: 0; font-size: 15px; }
+    h2 { margin: 0; font-size: 18px; font-weight: 650; }
     h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
     p { margin: 0; color: var(--muted); line-height: 1.5; }
     a { color: var(--accent); }
-    a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid oklch(0.72 0.13 258); outline-offset: 3px; }
     header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
     .subnav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+    .autofix-action-form { display: grid; gap: 8px; min-width: min(420px, calc(100vw - 40px)); }
+    .autofix-action-form label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .autofix-action-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     form { margin: 0; }
     button { min-height: 42px; border-radius: 6px; padding: 0 13px; font: 700 14px system-ui, sans-serif; cursor: pointer; }
-    .safe { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
-    .danger { border: 1px solid oklch(0.78 0.1 28); background: oklch(0.985 0.015 28); color: var(--danger); }
+    .safe { border: 1px solid var(--accent); background: var(--panel); color: var(--accent); }
+    .safe:hover { background: oklch(0.96 0.015 258); }
+    .danger { border: 1px solid var(--accent); background: var(--accent); color: oklch(0.98 0.006 248); }
+    .danger:hover { background: oklch(0.46 0.17 258); }
     input {
       width: 100%;
       min-height: 42px;
@@ -858,6 +1013,17 @@ function renderReportHtml(
       background: var(--panel);
       color: var(--ink);
       font: 650 14px system-ui, sans-serif;
+    }
+    textarea {
+      width: 100%;
+      min-height: 74px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 11px;
+      resize: vertical;
+      background: var(--panel);
+      color: var(--ink);
+      font: 500 13px/1.45 system-ui, sans-serif;
     }
     .stage-layout { display: grid; grid-template-columns: minmax(0, .62fr) minmax(300px, .38fr); gap: 18px; align-items: start; margin-bottom: 18px; }
     .layout { display: grid; grid-template-columns: minmax(300px, .42fr) minmax(0, .58fr); gap: 18px; align-items: start; }
@@ -975,6 +1141,8 @@ function renderReportHtml(
     .autofix-step[data-status="running"] .autofix-dot { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
     .autofix-step[data-status="failed"] .autofix-dot { background: var(--danger); border-color: var(--danger); }
     .autofix-step[data-status="skipped"] .autofix-dot { background: var(--warn); border-color: var(--warn); }
+    .autofix-step[data-status="pending"] { opacity: 0.45; }
+    .result-item.warn { background: oklch(0.965 0.03 75 / .6); }
     @keyframes pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.35); opacity: .65; }
@@ -996,6 +1164,7 @@ function renderReportHtml(
       background-size: 20px 20px;
       background-position: 0 0, 0 10px, 10px -10px, -10px 0;
     }
+    .screen-frame--empty { min-height: 140px; }
     .screen-frame img {
       display: block;
       width: 100%;
@@ -1148,6 +1317,10 @@ function renderReportHtml(
     pre { margin: 0 16px 16px; background: var(--code); color: var(--code-text); padding: 14px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.5; max-height: 420px; }
     code { background: var(--soft); border-radius: 4px; padding: 1px 4px; }
     .status-pill { display: inline-flex; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; background: oklch(0.95 0.045 152); color: oklch(0.36 0.11 152); border: 1px solid oklch(0.83 0.09 152); }
+    .status-pill.neutral { background: oklch(0.94 0.008 248); color: oklch(0.40 0.015 248); border-color: oklch(0.82 0.012 248); }
+    .status-pill.warn { background: oklch(0.96 0.04 75); color: oklch(0.39 0.1 70); border-color: oklch(0.84 0.09 75); }
+    .status-pill.info { background: oklch(0.94 0.05 258); color: oklch(0.38 0.12 258); border-color: oklch(0.80 0.09 258); }
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
     @media (max-width: 900px) {
       header { display: block; }
       .actions { justify-content: flex-start; margin-top: 14px; }
@@ -1182,14 +1355,62 @@ function renderReportHtml(
         </div>
       </div>
       <div class="actions" aria-label="Analysis actions">
-        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1" data-autofix-form data-autofix-mode="preview">
-          <button class="safe" type="submit">Preview Auto-Fix</button>
-        </form>
-        <form method="post" action="/reports/${encodeURIComponent(reportId)}/autofix" data-autofix-form data-autofix-mode="autofix">
-          <button class="danger" type="submit">Open PR with Auto-Fix</button>
-        </form>
+        <div class="action-panel">
+          <form method="post" action="/reports/${encodeURIComponent(reportId)}/triage">
+            <button class="safe" type="submit">Triage report</button>
+          </form>
+          <form
+            class="autofix-action-form"
+            method="post"
+            action="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1"
+            data-autofix-form
+          >
+            <details class="action-instructions"${instructionsOpen}>
+              <summary>Auto-Fix instructions</summary>
+              <label for="autofix-custom-instructions">
+                <textarea
+                  id="autofix-custom-instructions"
+                  name="customInstructions"
+                  maxlength="${MAX_AUTOFIX_INSTRUCTIONS_CHARS}"
+                  placeholder="Optional: preserve behavior, avoid broad refactors, or call out a preferred file."
+                >${escapeHtml(previousAutofixInstructions)}</textarea>
+              </label>
+            </details>
+            <div class="autofix-action-buttons">
+              <button
+                class="safe"
+                type="submit"
+                data-autofix-mode="preview"
+                formaction="/reports/${encodeURIComponent(reportId)}/autofix?dryRun=1"
+              >Preview Auto-Fix</button>
+              <button
+                class="danger"
+                type="submit"
+                data-autofix-mode="autofix"
+                formaction="/reports/${encodeURIComponent(reportId)}/autofix"
+              >Open PR with Auto-Fix</button>
+            </div>
+          </form>
+        </div>
       </div>
     </header>
+    <section class="decision-strip" aria-label="Report decision summary">
+      <div class="decision-card" data-tone="${escapeHtml(decision.tone)}">
+        <span>Signal</span>
+        <strong>${escapeHtml(decision.signal)}</strong>
+        <p>${escapeHtml(decision.detail)}</p>
+      </div>
+      <div class="decision-card">
+        <span>Likely failure</span>
+        <strong>${escapeHtml(consoleSummary)}</strong>
+        <p>${escapeHtml(networkSummary)}</p>
+      </div>
+      <div class="decision-card" data-tone="${escapeHtml(actionCopy.tone)}">
+        <span>Next action</span>
+        <strong>${escapeHtml(actionCopy.label)}</strong>
+        <p>${escapeHtml(actionCopy.detail)}</p>
+      </div>
+    </section>
     <section class="stage-layout" aria-label="Captured bug context">
       <section class="surface">
         <div class="surface-head">
@@ -1202,17 +1423,24 @@ function renderReportHtml(
         <div class="surface-head">
           <h2>Interaction summary</h2>
         </div>
-        <div class="stage-note">
-          <p><strong>${escapeHtml(report.annotation.target || 'No page target pinned')}</strong></p>
-          <p>${escapeHtml(primaryConsoleMessage(report))}</p>
-          <p>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} returned ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</p>
+        <div class="evidence-list">
+          <div class="evidence-row"><span>Page target</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
+          <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(primaryConsoleMessage(report))}</strong></div>
+          <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} → ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
         </div>
       </section>
+    </section>
+    <section class="surface autofix-result" id="triage-result">
+      <div class="surface-head">
+        <h2>Report Triage</h2>
+        <span class="status-pill ${pillClass(triageStatus(triage)).replace('pill','').trim()}">${escapeHtml(triageStatus(triage))}</span>
+      </div>
+      ${renderTriageHtml(reportId, triage)}
     </section>
     <section class="surface autofix-result" id="autofix-result">
       <div class="surface-head">
         <h2>Auto-Fix Result</h2>
-        <span class="status-pill">${escapeHtml(analysisStatus(autofix))}</span>
+        <span class="status-pill ${pillClass(analysisStatus(autofix)).replace('pill','').trim()}">${escapeHtml(analysisStatus(autofix))}</span>
       </div>
       ${renderAnalysisResultHtml(reportId, autofix)}
     </section>
@@ -1284,6 +1512,8 @@ function renderReportHtml(
           <pre>${escapeHtml(JSON.stringify(memory, null, 2))}</pre>
           <h3 class="raw-label">Memory Search</h3>
           <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
+          <h3 class="raw-label">Triage</h3>
+          <pre>${escapeHtml(JSON.stringify(triage, null, 2))}</pre>
         </details>
       </section>
     </div>
@@ -1491,16 +1721,23 @@ function renderReportHtml(
       document.querySelectorAll('[data-autofix-form]').forEach((form) => {
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
+          const submitter = event.submitter && event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+          const mode = submitter?.dataset.autofixMode || 'preview';
+          const action = submitter?.formAction || form.action;
           document.querySelectorAll('[data-autofix-form] button').forEach((button) => { button.disabled = true; });
           updateProgressFromStages([
-            { key: 'request', label: 'Request received', status: 'completed', detail: form.dataset.autofixMode === 'preview' ? 'Preview Auto-Fix started.' : 'Open PR with Auto-Fix started.' },
+            { key: 'request', label: 'Request received', status: 'completed', detail: mode === 'preview' ? 'Preview Auto-Fix plan started.' : 'Open PR with Auto-Fix started.' },
             { key: 'workspace', label: 'Load repository', status: 'running', detail: 'Waiting for backend stage updates.' },
           ]);
           const poll = window.setInterval(() => {
             refreshProgress().catch(() => undefined);
           }, 1200);
           try {
-            const response = await fetch(form.action, { method: 'POST', headers: { accept: 'application/json' } });
+            const response = await fetch(action, {
+              method: 'POST',
+              headers: { accept: 'application/json' },
+              body: new FormData(form),
+            });
             const body = await response.json().catch(() => null);
             updateProgressFromStages(body && body.autofix && body.autofix.stages);
             window.clearInterval(poll);
@@ -1872,11 +2109,67 @@ function primaryNetworkEvent(report: LiteReport): LiteReport['network'][number] 
     ?? report.network[0];
 }
 
+function networkEventSummary(event: LiteReport['network'][number]): string {
+  const method = event.method || 'GET';
+  const url = event.url || 'unknown URL';
+  const status = typeof event.status === 'number' ? String(event.status) : 'n/a';
+  return `${method} ${url} -> ${status}${event.failed ? ' (failed)' : ''}`;
+}
+
+function reportDecisionSummary(
+  report: LiteReport,
+  triage: ReportTriage | null,
+  autofix: unknown
+): { tone: string; signal: string; detail: string } {
+  const status = analysisStatus(autofix);
+  if (status === 'pr_opened') {
+    return { tone: 'good', signal: 'PR opened', detail: 'Auto-Fix produced verified repo changes and opened a PR.' };
+  }
+  if (status === 'verified_no_pr') {
+    return { tone: 'good', signal: 'Verified locally', detail: 'Auto-Fix verified the report without opening a PR.' };
+  }
+  if (status === 'failed' || status === 'external_blocker') {
+    return { tone: 'danger', signal: 'Blocked', detail: 'Auto-Fix needs attention before it can continue.' };
+  }
+  if (triage?.verdict === 'real_bug' || triage?.nextAction === 'run_autofix') {
+    return { tone: 'warn', signal: 'Likely bug', detail: triage.headline || 'Triage found enough signal to run Auto-Fix.' };
+  }
+  if (primaryNetworkEvent(report) || primaryConsoleMessage(report) !== 'No console error captured') {
+    return { tone: 'warn', signal: 'Evidence captured', detail: 'The report includes browser evidence that should be reviewed.' };
+  }
+  return { tone: 'warn', signal: 'Needs review', detail: 'The report needs triage before code changes.' };
+}
+
+function reportActionCopy(
+  triage: ReportTriage | null,
+  autofix: unknown
+): { tone: string; label: string; detail: string } {
+  const status = analysisStatus(autofix);
+  if (status === 'pr_opened') {
+    return { tone: 'good', label: 'Review PR', detail: 'A verified PR is ready for review.' };
+  }
+  if (status === 'verified_no_pr') {
+    return { tone: 'good', label: 'Review result', detail: 'Check the verified Auto-Fix result and decide whether another run is needed.' };
+  }
+  if (status === 'running') {
+    return { tone: 'warn', label: 'Wait for Auto-Fix', detail: 'The current Auto-Fix run is still active.' };
+  }
+  if (status === 'failed' || status === 'external_blocker') {
+    return { tone: 'danger', label: 'Resolve blocker', detail: 'Open the Auto-Fix result for the blocking error.' };
+  }
+  if (triage?.nextAction === 'run_autofix') {
+    return { tone: 'warn', label: 'Run Auto-Fix', detail: 'Use optional instructions if the fix needs constraints.' };
+  }
+  return { tone: 'warn', label: 'Triage first', detail: 'Run triage or preview Auto-Fix before opening a PR.' };
+}
+
 function summarizeStoredAutofix(autofix: unknown): {
   candidateFiles: string[];
   targetFiles: string[];
   patchSource?: string;
   patchSummary?: string;
+  artifactType?: string;
+  artifactReason?: string;
   prUrl?: string;
   rootCause?: string;
   verificationOk: boolean | null;
@@ -1889,7 +2182,8 @@ function summarizeStoredAutofix(autofix: unknown): {
   const record = autofix as {
     candidates?: Array<{ path?: unknown }>;
     diagnosis?: { targetFiles?: unknown; rootCause?: unknown };
-    patch?: { source?: unknown; summary?: unknown };
+    patch?: { source?: unknown; summary?: unknown; artifactType?: unknown };
+    artifact?: { type?: unknown; reason?: unknown };
     pr?: { url?: unknown; pr_url?: unknown };
     verification?: { ok?: unknown; commands?: Array<{ name?: unknown }> };
   };
@@ -1906,12 +2200,41 @@ function summarizeStoredAutofix(autofix: unknown): {
   const verificationOk = typeof record.verification?.ok === 'boolean' ? record.verification.ok : null;
   const rootCause = typeof record.diagnosis?.rootCause === 'string' ? record.diagnosis.rootCause : undefined;
   const patchSource = typeof record.patch?.source === 'string' ? record.patch.source : undefined;
-  const patchSummary = typeof record.patch?.summary === 'string' ? record.patch.summary : undefined;
+  const artifactType = typeof record.artifact?.type === 'string'
+    ? record.artifact.type
+    : typeof record.patch?.artifactType === 'string' ? record.patch.artifactType : undefined;
+  const artifactReason = typeof record.artifact?.reason === 'string' ? record.artifact.reason : undefined;
+  const patchSummary = typeof record.patch?.summary === 'string'
+    ? `${artifactType ? `${artifactType}: ` : ''}${record.patch.summary}`
+    : artifactType;
   const prUrl = typeof record.pr?.url === 'string'
     ? record.pr.url
     : typeof record.pr?.pr_url === 'string' ? record.pr.pr_url : undefined;
 
-  return { candidateFiles, targetFiles, patchSource, patchSummary, prUrl, rootCause, verificationOk, verificationCommands };
+  return {
+    candidateFiles,
+    targetFiles,
+    patchSource,
+    patchSummary,
+    artifactType,
+    artifactReason,
+    prUrl,
+    rootCause,
+    verificationOk,
+    verificationCommands,
+  };
+}
+
+function autofixCustomInstructions(autofix: unknown): string {
+  if (!autofix || typeof autofix !== 'object') return '';
+  const value = (autofix as { customInstructions?: unknown }).customInstructions;
+  return typeof value === 'string' ? value : '';
+}
+
+function autofixMode(autofix: unknown): string {
+  if (!autofix || typeof autofix !== 'object') return '';
+  const value = (autofix as { mode?: unknown }).mode;
+  return typeof value === 'string' ? value : '';
 }
 
 function renderAutofixProgressHtml(autofix: unknown): string {
@@ -1997,9 +2320,20 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
   const patch = summary.patchSummary
     ? `${summary.patchSummary}${summary.patchSource ? ` (${summary.patchSource})` : ''}`
     : summary.patchSource ?? 'No patch summary recorded';
+  const artifactWhy = summary.artifactReason ?? summary.rootCause ?? candidateFiles;
   const prHtml = summary.prUrl
     ? `<a href="${escapeHtml(summary.prUrl)}">Open GitHub PR</a>`
     : 'No PR opened';
+  const mode = autofixMode(autofix);
+  const customInstructions = autofixCustomInstructions(autofix);
+  const planAction = mode === 'preview'
+    ? 'Preview verified the plan only; no PR was opened.'
+    : summary.prUrl
+      ? 'Auto-Fix verified the patch and opened the PR.'
+      : 'Auto-Fix will open a PR when the run is not in preview mode and the PR gate passes.';
+  const instructionRow = customInstructions
+    ? `<div><dt>User instructions</dt><dd>${escapeHtml(customInstructions)}</dd></div>`
+    : '';
 
   return `${renderAutofixProgressHtml(autofix)}
   <div class="result-card">
@@ -2007,24 +2341,73 @@ function renderAnalysisResultHtml(reportId: string, autofix: unknown): string {
       <strong>${escapeHtml(headline)}</strong>
       <p>${escapeHtml(subcopy)}</p>
     </div>
+    <div class="analysis-summary">
+      <dl>
+        <div><dt>Auto-Fix plan</dt><dd>${escapeHtml(planAction)}</dd></div>
+        <div><dt>Root cause</dt><dd>${escapeHtml(summary.rootCause ?? 'No root cause recorded')}</dd></div>
+        <div><dt>Patch plan</dt><dd>${escapeHtml(patch)}</dd></div>
+        <div><dt>Candidate files</dt><dd>${escapeHtml(candidateFiles)}</dd></div>
+        ${instructionRow}
+      </dl>
+    </div>
     <div class="result-grid">
       <div class="result-item"><span>Status</span><strong>${escapeHtml(status)}</strong></div>
       <div class="result-item"><span>Changed files</span><strong>${escapeHtml(targetFiles)}</strong></div>
       <div class="result-item"><span>Patch</span><strong>${escapeHtml(patch)}</strong></div>
       <div class="result-item"><span>Verification</span><strong>${escapeHtml(verification)} · ${escapeHtml(commands)}</strong></div>
       <div class="result-item"><span>Pull request</span><strong>${prHtml}</strong></div>
-      <div class="result-item"><span>Why this file</span><strong>${escapeHtml(summary.rootCause ?? candidateFiles)}</strong></div>
+      <div class="result-item"><span>Why this file</span><strong>${escapeHtml(artifactWhy)}</strong></div>
     </div>
   </div>
-  <div class="analysis-summary">
-    <dl>
-      <div><dt>Status</dt><dd>${escapeHtml(status)}</dd></div>
-      <div><dt>Root cause</dt><dd>${escapeHtml(summary.rootCause ?? 'No root cause recorded')}</dd></div>
-      <div><dt>Targets</dt><dd>${escapeHtml(targetFiles)}</dd></div>
-      <div><dt>Candidates</dt><dd>${escapeHtml(candidateFiles)}</dd></div>
-      <div><dt>Verification</dt><dd>${escapeHtml(verification)} · ${escapeHtml(commands)}</dd></div>
-      <div><dt>PR</dt><dd>${prHtml}</dd></div>
-    </dl>
+  ${rawDetails}`;
+}
+
+function renderTriageHtml(reportId: string, triage: ReportTriage | null): string {
+  const rawDetails = `<details class="analysis-details" data-analysis-src="/reports/${encodeURIComponent(reportId)}/triage">
+    <summary>Debug triage JSON</summary>
+    <pre data-analysis-raw>Open to load triage JSON.</pre>
+  </details>`;
+
+  if (!triage) {
+    return `<div class="analysis-body">
+      <p>No triage run yet. Triage uses captured browser evidence to decide whether this looks like a real bug before starting the heavier Auto-Fix path.</p>
+    </div>
+    ${rawDetails}`;
+  }
+
+  const evidence = triage.evidence.length
+    ? triage.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join('')
+    : '<li>No evidence recorded.</li>';
+  const userSummary = triage.userSummary || triage.headline;
+  const agentReport = triage.agentReport || triage.rationale;
+  const source = `${triage.source} · ${triage.model} · ${triage.latencyMs}ms`;
+  const error = triage.error
+    ? `<p class="memory-meta">Fallback: ${escapeHtml(triage.error)}</p>`
+    : '';
+
+  return `<div class="triage-callout">
+    <div class="triage-copy">
+      <strong>${escapeHtml(triage.headline)}</strong>
+      <p>${escapeHtml(triage.rationale)}</p>
+    </div>
+    <div class="triage-metrics">
+      <div class="triage-metric"><span>Verdict</span><strong>${escapeHtml(triage.verdict)}</strong></div>
+      <div class="triage-metric"><span>Confidence</span><strong>${escapeHtml(triage.confidence)}</strong></div>
+      <div class="triage-metric"><span>Next action</span><strong>${escapeHtml(triage.nextAction)}</strong></div>
+      <div class="triage-metric"><span>Source</span><strong>${escapeHtml(source)}</strong></div>
+    </div>
+    ${error}
+    <div class="analysis-summary">
+      <dl>
+        <div><dt>User said</dt><dd>${escapeHtml(userSummary)}</dd></div>
+        <div><dt>Lite Annotate report</dt><dd>${escapeHtml(agentReport)}</dd></div>
+        <div><dt>Real bug</dt><dd>${triage.isRealBug ? 'yes' : 'no'}</dd></div>
+      </dl>
+    </div>
+  </div>
+  <div class="evidence-chip-list">
+    <span>Evidence used</span>
+    <ol class="evidence-chips">${evidence}</ol>
   </div>
   ${rawDetails}`;
 }
@@ -2044,6 +2427,38 @@ function renderMemoryImpactHtml(summary: MemoryImpactSummary): string {
     <ul class="impact-list">${items}</ul>
     <p class="memory-meta">Source: ${escapeHtml(summary.source)} · Similar memories: ${summary.similarCount} · Outcome memory: ${escapeHtml(summary.outcomeMemory)}</p>
   </section>`;
+}
+
+function gstackConsoleText(investigation: GStackInvestigationView): string {
+  const lines = [
+    `$ status: ${investigation.status}`,
+    `$ workflow: ${investigation.runner.workflow}`,
+  ];
+  if (investigation.runner.jobId) lines.push(`$ job: ${investigation.runner.jobId}`);
+  lines.push(`$ confidence: ${investigation.confidence}`);
+  if (investigation.runner.commandsRun.length) {
+    lines.push(`$ commands: ${investigation.runner.commandsRun.join(' -> ')}`);
+  }
+  if (investigation.status === 'queued') lines.push('runner: queued; waiting for the remote GStack worker to start');
+  if (investigation.status === 'running') lines.push('runner: running; waiting for the next callback');
+  if (investigation.headline) lines.push(`headline: ${investigation.headline}`);
+  if (investigation.rootCause) lines.push(`root cause: ${investigation.rootCause}`);
+  const summary = investigation.raw?.result?.summary;
+  if (typeof summary === 'string' && summary.trim()) lines.push(`summary: ${summary.trim()}`);
+  for (const item of investigation.evidence) {
+    lines.push(`evidence[${item.label}]: ${item.value}`);
+  }
+  const tests = investigation.raw?.result?.tests;
+  if (Array.isArray(tests)) {
+    for (const test of tests) {
+      if (!test || typeof test !== 'object') continue;
+      const command = typeof test.command === 'string' ? test.command : 'unknown';
+      const status = typeof test.status === 'string' ? test.status : 'unknown';
+      const output = typeof test.output === 'string' && test.output.trim() ? ` - ${test.output.trim()}` : '';
+      lines.push(`test[${status}]: ${command}${output}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function renderGStackInvestigationHtml(
@@ -2118,38 +2533,6 @@ function renderGStackInvestigationHtml(
   </section>`;
 }
 
-function gstackConsoleText(investigation: GStackInvestigationView): string {
-  const lines = [
-    `$ status: ${investigation.status}`,
-    `$ workflow: ${investigation.runner.workflow}`,
-  ];
-  if (investigation.runner.jobId) lines.push(`$ job: ${investigation.runner.jobId}`);
-  lines.push(`$ confidence: ${investigation.confidence}`);
-  if (investigation.runner.commandsRun.length) {
-    lines.push(`$ commands: ${investigation.runner.commandsRun.join(' -> ')}`);
-  }
-  if (investigation.status === 'queued') lines.push('runner: queued; waiting for the remote GStack worker to start');
-  if (investigation.status === 'running') lines.push('runner: running; waiting for the next callback');
-  if (investigation.headline) lines.push(`headline: ${investigation.headline}`);
-  if (investigation.rootCause) lines.push(`root cause: ${investigation.rootCause}`);
-  const summary = investigation.raw?.result?.summary;
-  if (typeof summary === 'string' && summary.trim()) lines.push(`summary: ${summary.trim()}`);
-  for (const item of investigation.evidence) {
-    lines.push(`evidence[${item.label}]: ${item.value}`);
-  }
-  const tests = investigation.raw?.result?.tests;
-  if (Array.isArray(tests)) {
-    for (const test of tests) {
-      if (!test || typeof test !== 'object') continue;
-      const command = typeof test.command === 'string' ? test.command : 'unknown';
-      const status = typeof test.status === 'string' ? test.status : 'unknown';
-      const output = typeof test.output === 'string' && test.output.trim() ? ` - ${test.output.trim()}` : '';
-      lines.push(`test[${status}]: ${command}${output}`);
-    }
-  }
-  return lines.join('\n');
-}
-
 function gstackStatusClassName(status: string): string {
   if (status === 'passed') return 'status-pill';
   if (status === 'queued' || status === 'running') return 'status-pill info';
@@ -2196,7 +2579,7 @@ function renderScreenshotStage(report: LiteReport): string {
     : `<div class="screen-empty"><strong>Screenshot not available</strong><span>${escapeHtml(report.screenshot.reason || 'Capture was missing or too small to render.')}</span></div>`;
 
   return `<div class="screen-stage">
-    <div class="screen-frame">${frame}</div>
+    <div class="screen-frame${isRenderableScreenshot(report) ? '' : ' screen-frame--empty'}">${frame}</div>
     <div class="screen-meta">
       <span>${escapeHtml(viewport)}</span>
       <span>${escapeHtml(annotation)}</span>
@@ -2220,6 +2603,12 @@ function analysisStatus(autofix: unknown): string {
   if (!autofix || typeof autofix !== 'object') return 'not run';
   const status = (autofix as { status?: unknown }).status;
   return typeof status === 'string' ? status : 'recorded';
+}
+
+function triageStatus(triage: unknown): string {
+  if (!triage || typeof triage !== 'object') return 'not run';
+  const verdict = (triage as { verdict?: unknown }).verdict;
+  return typeof verdict === 'string' ? verdict : 'recorded';
 }
 
 function initialAutofixStages(dryRun: boolean): AutofixStageEvent[] {
@@ -2260,7 +2649,10 @@ function completeAutofixStages(stages: AutofixStageEvent[], status: string): Aut
   const existing = stages.length ? stages : initialAutofixStages(false);
   return existing.map((stage) => {
     if (stage.status !== 'pending' && stage.status !== 'running') return stage;
-    if (stage.key === 'pr' && (status === 'verified_no_pr' || status === 'diagnosis_only')) {
+    if (stage.key === 'pr' && status === 'pr_opened') {
+      return { ...stage, status: 'completed', detail: 'PR opened for this Auto-Fix run.', at: now };
+    }
+    if (stage.key === 'pr' && (status === 'verified_no_pr' || status === 'diagnosis_only' || status === 'external_blocker')) {
       return { ...stage, status: 'skipped', detail: 'No PR was opened for this run.', at: now };
     }
     if (stage.status === 'running') return { ...stage, status: 'completed', at: now };
@@ -2309,6 +2701,33 @@ function parseGStackMode(value: unknown): GStackJobMode {
 function requestPrefersHtml(request: Request): boolean {
   const accept = request.headers.get('accept') ?? '';
   return accept.includes('text/html') && !accept.includes('application/json');
+}
+
+async function readAutofixCustomInstructions(request: Request): Promise<string | undefined> {
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!contentType) return undefined;
+
+  let rawValue: unknown;
+  try {
+    if (contentType.includes('application/json')) {
+      const body = await request.json() as Record<string, unknown>;
+      rawValue = body.customInstructions ?? body.instructions ?? body.autofixInstructions;
+    } else if (
+      contentType.includes('application/x-www-form-urlencoded') ||
+      contentType.includes('multipart/form-data')
+    ) {
+      const body = await request.formData();
+      rawValue = body.get('customInstructions') ?? body.get('instructions') ?? body.get('autofixInstructions');
+    }
+  } catch {
+    return undefined;
+  }
+
+  const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+  if (!value) return undefined;
+  return value.length > MAX_AUTOFIX_INSTRUCTIONS_CHARS
+    ? value.slice(0, MAX_AUTOFIX_INSTRUCTIONS_CHARS)
+    : value;
 }
 
 function getGStackUiTriggerState(): { enabled: boolean; message: string } {
@@ -2460,6 +2879,7 @@ interface StoredAutofixSummary extends Record<string, unknown> {
   candidates: unknown[];
   diagnosis: unknown;
   patch: unknown;
+  artifact: unknown;
   verification: unknown;
   pr: unknown;
   prError?: string;
@@ -2473,8 +2893,10 @@ interface AutofixRunnerResult {
     candidates?: Array<{ path: string; score: number; reasons: string[] }>;
     diagnosis?: unknown;
     patch?: unknown;
+    artifact?: unknown;
     verification?: unknown;
   };
+  artifact?: unknown;
   pr?: unknown;
   prError?: string;
   meta?: unknown;
@@ -2487,12 +2909,51 @@ function summarizeAutofixResult(result: unknown): StoredAutofixSummary {
     candidates: typed.pipeline?.candidates?.slice(0, 5) ?? [],
     diagnosis: typed.pipeline?.diagnosis ?? null,
     patch: typed.pipeline?.patch ?? null,
+    artifact: typed.artifact ?? typed.pipeline?.artifact ?? null,
     verification: typed.pipeline?.verification ?? null,
     pr: typed.pr ?? null,
     prError: typed.prError,
     meta: typed.meta,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function pillClass(status: string): string {
+  const s = status.toLowerCase().replace(/[\s:]+/g, '_');
+  if (['pr_opened', 'passed', 'verified_no_pr', 'written', 'real_bug'].some((v) => s.includes(v))) return 'pill';
+  if (['not_run', 'pr_skipped', 'recorded', 'no_pr'].some((v) => s.includes(v))) return 'pill neutral';
+  if (['diagnosis_only', 'fallback', 'blocked', 'failed', 'external_blocker', 'not_a_bug'].some((v) => s.includes(v))) return 'pill warn';
+  if (['queued', 'running', 'likely_bug', 'needs_more_info'].some((v) => s.includes(v))) return 'pill info';
+  return 'pill neutral';
+}
+
+function render404Html(reportId: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Report not found</title>
+  <style>
+    :root { --ink: oklch(0.21 0.018 248); --muted: oklch(0.46 0.022 248); --canvas: oklch(0.982 0.006 248); --accent: oklch(0.51 0.17 258); }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--canvas); color: var(--ink); display: grid; place-items: center; min-height: 100vh; }
+    main { text-align: center; padding: 40px 20px; }
+    h1 { font-size: 24px; margin: 0 0 10px; }
+    p { color: var(--muted); margin: 0 0 24px; line-height: 1.5; }
+    a { color: var(--accent); font-weight: 650; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: oklch(0.94 0.008 248); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Report not found</h1>
+    <p>No report exists for <code>${escapeHtml(reportId)}</code>.</p>
+    <a href="/reports/dashboard">Back to review queue</a>
+  </main>
+</body>
+</html>`;
 }
 
 function escapeHtml(value: string): string {

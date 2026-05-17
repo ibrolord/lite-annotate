@@ -2,10 +2,12 @@ import { runPersonBPipeline } from './worker/person_b_pipeline.js';
 import type { AutofixStageReporter, PersonBPipelineInput, PersonBPipelineResult } from './worker/person_b_pipeline.js';
 import { createOpenAICodePatchGeneratorFromEnv } from './worker/patch/model_generate.js';
 import type { CodePatchGenerator } from './worker/patch/model_generate.js';
+import { verifyStructuredPatch } from './worker/patch/verification.js';
 import { openVerifiedPR } from './worker/pr_gate.js';
-import type { CreatePRFunction, GitHubPRResult } from './worker/pr_gate.js';
+import type { CreatePRFunction, GitHubPRResult, OpenVerifiedPRResult } from './worker/pr_gate.js';
+import { externalBlockerArtifact, fallbackPatchabilityArtifact } from './worker/patchability.js';
 
-export type AutofixStatus = 'diagnosis_only' | 'verified_no_pr' | 'pr_opened' | 'pr_skipped';
+export type AutofixStatus = 'diagnosis_only' | 'verified_no_pr' | 'pr_opened' | 'pr_skipped' | 'external_blocker';
 
 export interface AutofixOptions {
   workspacePath?: string;
@@ -19,14 +21,54 @@ export interface AutofixOptions {
   skipPR?: boolean;
   runPackageScripts?: boolean;
   codePatchGenerator?: CodePatchGenerator;
+  customInstructions?: string;
   onStage?: AutofixStageReporter;
 }
 
 export interface AutofixResult {
   status: AutofixStatus;
   pipeline: PersonBPipelineResult;
+  artifact: PersonBPipelineResult['artifact'];
   pr: GitHubPRResult | null;
   prError?: string;
+}
+
+function externalBlockerPipeline(message: string): PersonBPipelineResult {
+  return {
+    workspacePath: '',
+    index: { root: '', files: [], packageScripts: {} },
+    candidates: [],
+    diagnosis: {
+      type: 'bug',
+      severity: 'low',
+      rootCause: message,
+      evidence: [message],
+      targetFiles: [],
+      fixStrategy: 'Resolve the external blocker before running repository patch generation.',
+      confidence: 0,
+      shouldPatch: false,
+    },
+    patch: {
+      ok: false,
+      files: [],
+      error: message,
+      artifactType: 'external_blocker',
+    },
+    verification: null,
+    artifact: externalBlockerArtifact(message),
+  };
+}
+
+function artifactMetadata(pipeline: PersonBPipelineResult, prUrl?: string): Record<string, unknown> {
+  return {
+    type: pipeline.artifact.type,
+    report_class: pipeline.artifact.reportClass,
+    reason: pipeline.artifact.reason,
+    target_files: pipeline.artifact.targetFiles,
+    modified_files: pipeline.verification?.modifiedFiles ?? [],
+    verification_ok: pipeline.verification?.ok ?? false,
+    pr_url: prUrl,
+  };
 }
 
 function repoUrl(repo: string): string {
@@ -131,8 +173,38 @@ function pipelineForModifiedPrFiles(pipeline: PersonBPipelineResult): {
         ...pipeline.patch,
         files: prFiles,
       },
+      artifact: {
+        ...pipeline.artifact,
+        targetFiles: pipeline.artifact.targetFiles.filter((file) => modifiedFiles.has(file)),
+      },
     },
     skippedFiles,
+  };
+}
+
+function pipelineForFallbackArtifact(
+  pipeline: PersonBPipelineResult,
+  report: PersonBPipelineInput['report'],
+  previousPatchError: string
+): PersonBPipelineResult {
+  const fallback = fallbackPatchabilityArtifact({
+    report,
+    diagnosis: pipeline.diagnosis,
+    candidates: pipeline.candidates,
+    previousPatchError,
+  });
+  return {
+    ...pipeline,
+    diagnosis: fallback.diagnosis,
+    patch: fallback.patch,
+    verification: verifyStructuredPatch({
+      workspacePath: pipeline.workspacePath,
+      targetFiles: fallback.diagnosis.targetFiles,
+      files: fallback.patch.files,
+      smokeCommands: [],
+      runPackageScripts: false,
+    }),
+    artifact: fallback.artifact,
   };
 }
 
@@ -143,7 +215,21 @@ export async function runAutofix(
 ): Promise<AutofixResult> {
   const embeddedRepo = reportRepo(report);
   const env = envOptions();
-  const trustedEmbeddedRepo = trustedReportRepo(embeddedRepo, env, options);
+  let trustedEmbeddedRepo: string | undefined;
+  try {
+    trustedEmbeddedRepo = trustedReportRepo(embeddedRepo, env, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await options.onStage?.({
+      key: 'request',
+      label: 'Request received',
+      status: 'failed',
+      detail: message,
+      at: new Date().toISOString(),
+    });
+    const pipeline = externalBlockerPipeline(message);
+    return { status: 'external_blocker', pipeline, artifact: pipeline.artifact, pr: null, prError: message };
+  }
   const resolvedOptions = {
     ...env,
     ...options,
@@ -153,18 +239,33 @@ export async function runAutofix(
   };
   console.log(`[autofix] starting Person B pipeline for bug ${bugId}`);
 
-  const pipeline = await runPersonBPipeline({
-    report,
-    workspacePath: resolvedOptions.workspacePath,
-    repo: resolvedOptions.repo,
-    workspaceRoot: resolvedOptions.workspaceRoot,
-    branch: resolvedOptions.branch,
-    githubToken: resolvedOptions.githubToken,
-    smokeCommands: [],
-    runPackageScripts: resolvedOptions.runPackageScripts,
-    codePatchGenerator: resolvedOptions.codePatchGenerator ?? createOpenAICodePatchGeneratorFromEnv(),
-    onStage: resolvedOptions.onStage,
-  });
+  let pipeline: PersonBPipelineResult;
+  try {
+    pipeline = await runPersonBPipeline({
+      report,
+      workspacePath: resolvedOptions.workspacePath,
+      repo: resolvedOptions.repo,
+      workspaceRoot: resolvedOptions.workspaceRoot,
+      branch: resolvedOptions.branch,
+      githubToken: resolvedOptions.githubToken,
+      smokeCommands: [],
+      runPackageScripts: resolvedOptions.runPackageScripts,
+      codePatchGenerator: resolvedOptions.codePatchGenerator ?? createOpenAICodePatchGeneratorFromEnv(),
+      customInstructions: resolvedOptions.customInstructions,
+      onStage: resolvedOptions.onStage,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await resolvedOptions.onStage?.({
+      key: 'workspace',
+      label: 'Load repository',
+      status: 'failed',
+      detail: message,
+      at: new Date().toISOString(),
+    });
+    const blockerPipeline = externalBlockerPipeline(message);
+    return { status: 'external_blocker', pipeline: blockerPipeline, artifact: blockerPipeline.artifact, pr: null, prError: message };
+  }
 
   console.log(
     `[autofix] diagnosis confidence=${pipeline.diagnosis.confidence} targets=${pipeline.diagnosis.targetFiles.join(',') || 'none'}`
@@ -172,26 +273,49 @@ export async function runAutofix(
 
   if (!pipeline.verification?.ok) {
     console.log(`[autofix] verification did not pass; skipping PR`);
+    const message = pipeline.verification?.error ?? 'verification did not pass';
     await resolvedOptions.onStage?.({
       key: 'verification',
       label: 'Verify patch',
       status: 'failed',
-      detail: pipeline.verification?.error ?? 'verification did not pass',
+      detail: message,
       at: new Date().toISOString(),
     });
-    return { status: 'diagnosis_only', pipeline, pr: null };
+    return { status: 'external_blocker', pipeline, artifact: pipeline.artifact, pr: null, prError: message };
   }
 
   if (pipeline.verification.modifiedFiles.length === 0) {
-    console.log('[autofix] verified locally; no repository changes produced, skipping PR');
+    const message = 'No repository changes were produced; the target may already match the requested fix.';
+    if (resolvedOptions.skipPR) {
+      console.log('[autofix] verified locally; no repository changes produced, skipping PR');
+      await resolvedOptions.onStage?.({
+        key: 'pr',
+        label: 'PR gate',
+        status: 'skipped',
+        detail: message,
+        at: new Date().toISOString(),
+      });
+      return { status: 'verified_no_pr', pipeline, artifact: pipeline.artifact, pr: null };
+    }
+
+    console.log('[autofix] verified locally with no repository changes; generating fallback artifact for PR');
+    pipeline = pipelineForFallbackArtifact(pipeline, report, message);
     await resolvedOptions.onStage?.({
-      key: 'pr',
-      label: 'PR gate',
-      status: 'skipped',
-      detail: 'No repository changes were produced; the target may already match the requested fix.',
+      key: 'patch',
+      label: 'Generate fallback artifact',
+      status: pipeline.verification?.ok ? 'completed' : 'failed',
+      detail: pipeline.patch.files.map((file) => file.path).join(', ') || pipeline.verification?.error,
+      logs: [
+        `artifact type: ${pipeline.artifact.type}`,
+        `previous patch result: ${message}`,
+        `files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+      ],
       at: new Date().toISOString(),
     });
-    return { status: 'verified_no_pr', pipeline, pr: null };
+    if (!pipeline.verification?.ok) {
+      const error = pipeline.verification?.error ?? 'fallback artifact verification did not pass';
+      return { status: 'external_blocker', pipeline, artifact: pipeline.artifact, pr: null, prError: error };
+    }
   }
 
   if (resolvedOptions.skipPR) {
@@ -203,20 +327,21 @@ export async function runAutofix(
       detail: 'Preview mode requested; PR creation suppressed.',
       at: new Date().toISOString(),
     });
-    return { status: 'verified_no_pr', pipeline, pr: null };
+    return { status: 'verified_no_pr', pipeline, artifact: pipeline.artifact, pr: null };
   }
 
   const githubRepo = resolvedOptions.githubRepo || resolvedOptions.repo;
   if (!resolvedOptions.githubToken || !githubRepo) {
     console.log('[autofix] verified locally; no GitHub credentials configured, skipping PR');
+    const message = 'GitHub credentials or repository are not configured for PR creation.';
     await resolvedOptions.onStage?.({
       key: 'pr',
       label: 'PR gate',
-      status: 'skipped',
-      detail: 'GitHub credentials or repository are not configured.',
+      status: 'failed',
+      detail: message,
       at: new Date().toISOString(),
     });
-    return { status: 'verified_no_pr', pipeline, pr: null };
+    return { status: 'external_blocker', pipeline, artifact: pipeline.artifact, pr: null, prError: message };
   }
 
   await resolvedOptions.onStage?.({
@@ -245,37 +370,57 @@ export async function runAutofix(
       at: new Date().toISOString(),
     });
   }
-  const prResult = await openVerifiedPR({
-    pipeline: prPipeline,
-    report: {
-      id: bugId,
-      title: typeof report.title === 'string' ? report.title : undefined,
-      description: typeof report.description === 'string' ? report.description : undefined,
-      url: typeof report.url === 'string' ? report.url : undefined,
-      route: typeof report.route === 'string' ? report.route : undefined,
-    },
-    repoUrl: repoUrl(githubRepo),
-    token: resolvedOptions.githubToken,
-    baseBranch: resolvedOptions.branch,
-    createPR: resolvedOptions.createPR,
-  });
-
-  if (!prResult.ok) {
-    console.log(`[autofix] PR gate skipped: ${prResult.error}`);
+  let prResult: OpenVerifiedPRResult;
+  try {
+    prResult = await openVerifiedPR({
+      pipeline: prPipeline,
+      report: {
+        id: bugId,
+        title: typeof report.title === 'string' ? report.title : undefined,
+        description: typeof report.description === 'string' ? report.description : undefined,
+        url: typeof report.url === 'string' ? report.url : undefined,
+        route: typeof report.route === 'string' ? report.route : undefined,
+      },
+      repoUrl: repoUrl(githubRepo),
+      token: resolvedOptions.githubToken,
+      baseBranch: resolvedOptions.branch,
+      createPR: resolvedOptions.createPR,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     await resolvedOptions.onStage?.({
       key: 'pr',
       label: 'PR gate',
-      status: 'skipped',
-      detail: prResult.error,
+      status: 'failed',
+      detail: message,
       logs: [
         `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
         `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
         ...(skippedFiles.length ? [`skipped no-op patch files: ${skippedFiles.join(', ')}`] : []),
-        prResult.error ?? 'PR gate skipped.',
+        message,
       ],
       at: new Date().toISOString(),
     });
-    return { status: 'pr_skipped', pipeline, pr: null, prError: prResult.error };
+    return { status: 'external_blocker', pipeline: prPipeline, artifact: prPipeline.artifact, pr: null, prError: message };
+  }
+
+  if (!prResult.ok) {
+    console.log(`[autofix] PR gate skipped: ${prResult.error}`);
+    const message = prResult.error ?? 'PR gate skipped.';
+    await resolvedOptions.onStage?.({
+      key: 'pr',
+      label: 'PR gate',
+      status: 'failed',
+      detail: message,
+      logs: [
+        `verified modified files: ${pipeline.verification.modifiedFiles.join(', ') || 'none'}`,
+        `patch files: ${pipeline.patch.files.map((file) => file.path).join(', ') || 'none'}`,
+        ...(skippedFiles.length ? [`skipped no-op patch files: ${skippedFiles.join(', ')}`] : []),
+        message,
+      ],
+      at: new Date().toISOString(),
+    });
+    return { status: 'external_blocker', pipeline: prPipeline, artifact: prPipeline.artifact, pr: null, prError: message };
   }
 
   console.log(`[autofix] PR opened: ${prResult.pr?.pr_url}`);
@@ -292,7 +437,8 @@ export async function runAutofix(
     ],
     at: new Date().toISOString(),
   });
-  return { status: 'pr_opened', pipeline, pr: prResult.pr };
+  const pr = prResult.pr ? { ...prResult.pr, artifact_metadata: artifactMetadata(prPipeline, prResult.pr.pr_url) } : null;
+  return { status: 'pr_opened', pipeline, artifact: prPipeline.artifact, pr };
 }
 
 export async function triggerAutofix(bugId: string, report: PersonBPipelineInput['report']): Promise<AutofixResult> {

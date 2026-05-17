@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createApp } from '../api/index.js';
-import { createMemoryAdapter } from '../api/gbrain.js';
+import { createMemoryAdapter, type MemoryAdapter } from '../api/gbrain.js';
 import { ReportStore } from '../api/report_store.js';
 
 test('POST /report persists, GET /reports/:id returns normalized JSON, and handoff is complete', async () => {
@@ -71,6 +71,103 @@ test('POST /report persists, GET /reports/:id returns normalized JSON, and hando
     assert.match(handoffBody.agentComparison.memory.advantage, /starts from prior/i);
     assert.ok(handoffBody.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'prior_memory'));
     assert.ok(handoffBody.memoryReceipts.some((receipt: { source: string }) => receipt.source === 'current_browser_report'));
+    assert.equal(handoffBody.triage, null);
+  } finally {
+    if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = oldMemoryDir;
+    if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
+    else process.env.MEMORY_PROVIDER = oldProvider;
+  }
+});
+
+test('POST /reports/:id/triage stores and exposes report triage', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-triage-api-'));
+  const oldMemoryDir = process.env.MEMORY_DIR;
+  const oldProvider = process.env.MEMORY_PROVIDER;
+  process.env.MEMORY_DIR = join(root, 'memory');
+  process.env.MEMORY_PROVIDER = 'github-markdown';
+  const store = new ReportStore(join(root, 'reports'));
+  const app = createApp({
+    store,
+    memory: createMemoryAdapter(),
+    triageRunner: async (report) => ({
+      verdict: 'real_bug',
+      confidence: 'high',
+      isRealBug: true,
+      userSummary: 'The user says clicking Load User Profile crashes the users page.',
+      agentReport: 'The captured report includes a browser error on /users, so Lite Annotate should treat this as a real bug and move to Auto-Fix.',
+      headline: 'Captured runtime evidence supports a real bug',
+      rationale: `The report has a browser error on ${report.route}.`,
+      evidence: ["Console error: Cannot read properties of undefined reading 'name'", 'Route: /users'],
+      nextAction: 'run_autofix',
+      source: 'llm',
+      model: 'test-fast-triage',
+      latencyMs: 12,
+      createdAt: '2026-05-16T12:00:00.000Z',
+    }),
+  });
+
+  try {
+    const post = await app.request('/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fixture),
+    });
+    const postBody = await post.json();
+
+    const viewBefore = await app.request(`/reports/${postBody.reportId}/view`);
+    const viewBeforeHtml = await viewBefore.text();
+    assert.match(viewBeforeHtml, /Triage report/);
+    assert.match(viewBeforeHtml, /Report Triage/);
+    assert.match(viewBeforeHtml, /No triage run yet/);
+    assert.match(viewBeforeHtml, new RegExp(`/reports/${postBody.reportId}/triage`));
+
+    const triage = await app.request(`/reports/${postBody.reportId}/triage`, { method: 'POST' });
+    assert.equal(triage.status, 200);
+    const triageBody = await triage.json();
+    assert.equal(triageBody.reportId, postBody.reportId);
+    assert.equal(triageBody.triage.verdict, 'real_bug');
+    assert.equal(triageBody.triage.isRealBug, true);
+    assert.match(triageBody.triage.userSummary, /clicking Load User Profile crashes/);
+    assert.match(triageBody.triage.agentReport, /treat this as a real bug/);
+    assert.equal(triageBody.triage.nextAction, 'run_autofix');
+    assert.equal(triageBody.triage.source, 'llm');
+
+    const get = await app.request(`/reports/${postBody.reportId}/triage`);
+    assert.equal(get.status, 200);
+    const getBody = await get.json();
+    assert.equal(getBody.triage.model, 'test-fast-triage');
+
+    const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
+    const handoffBody = await handoff.json();
+    assert.equal(handoffBody.triage.verdict, 'real_bug');
+
+    const dashboard = await app.request('/reports/dashboard');
+    const dashboardHtml = await dashboard.text();
+    assert.match(dashboardHtml, /1<\/strong><span>Triaged/);
+    assert.match(dashboardHtml, /real_bug/);
+
+    const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
+    const viewAfterHtml = await viewAfter.text();
+    assert.match(viewAfterHtml, /Captured runtime evidence supports a real bug/);
+    assert.match(viewAfterHtml, /User said/);
+    assert.match(viewAfterHtml, /The user says clicking Load User Profile crashes/);
+    assert.match(viewAfterHtml, /Lite Annotate report/);
+    assert.match(viewAfterHtml, /treat this as a real bug/);
+    assert.match(viewAfterHtml, /Real bug/);
+    assert.match(viewAfterHtml, /test-fast-triage/);
+    assert.match(viewAfterHtml, /Console error: Cannot read properties/);
+
+    const htmlTriage = await app.request(`/reports/${postBody.reportId}/triage`, {
+      method: 'POST',
+      headers: { Accept: 'text/html' },
+    });
+    assert.equal(htmlTriage.status, 303);
+    assert.equal(
+      htmlTriage.headers.get('location'),
+      `/reports/${postBody.reportId}/view#triage-result`
+    );
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
@@ -88,11 +185,20 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
   process.env.MEMORY_PROVIDER = 'github-markdown';
   const store = new ReportStore(join(root, 'reports'));
   const dryRunCalls: boolean[] = [];
+  const customInstructionCalls: Array<string | undefined> = [];
   const app = createApp({
     store,
     memory: createMemoryAdapter(),
     autofixRunner: async (reportId, report, options) => {
       dryRunCalls.push(options.dryRun);
+      customInstructionCalls.push(options.customInstructions);
+      const artifact = {
+        type: 'fix_pr',
+        reportClass: 'runtime_or_ui_fix',
+        reason: 'Diagnosis is confident enough for a scoped product-code patch.',
+        targetFiles: ['src/users.js'],
+        verificationPlan: ['Run syntax checks.'],
+      };
       await options.onStage?.({
         key: 'verification',
         label: 'Verify patch',
@@ -101,9 +207,35 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
         logs: ['node --check src/users.js: pass'],
         at: new Date().toISOString(),
       });
+      if (!options.dryRun) {
+        await options.onStage?.({
+          key: 'pr',
+          label: 'PR gate',
+          status: 'completed',
+          detail: 'https://github.com/ibrolord/lite-annotate-demo/pull/88',
+          logs: [
+            'verified modified files: src/users.js',
+            'opened PR: https://github.com/ibrolord/lite-annotate-demo/pull/88',
+          ],
+          at: new Date().toISOString(),
+        });
+      }
       return {
-        status: 'verified_no_pr',
-        pr: null,
+        status: options.dryRun ? 'verified_no_pr' : 'pr_opened',
+        artifact,
+        pr: options.dryRun ? null : {
+          pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/88',
+          branch: 'fix/user-profile-crashes',
+          files: ['src/users.js'],
+          write_mode: 'direct_files',
+          artifact_metadata: {
+            type: 'fix_pr',
+            target_files: ['src/users.js'],
+            modified_files: ['src/users.js'],
+            verification_ok: true,
+            pr_url: 'https://github.com/ibrolord/lite-annotate-demo/pull/88',
+          },
+        },
         pipeline: {
           candidates: [{ path: 'src/users.js', score: 900, reasons: ['route match'] }],
           diagnosis: {
@@ -128,6 +260,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
             modifiedFiles: ['src/users.js'],
             commands: [{ name: 'node --check src/users.js', ok: true, stdout: '', stderr: '' }],
           },
+          artifact,
         },
         meta: { reportId, title: report.title },
       };
@@ -148,6 +281,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Open PR with Auto-Fix/);
     assert.doesNotMatch(viewBeforeHtml, /Run analysis/);
     assert.match(viewBeforeHtml, /Preview Auto-Fix/);
+    assert.match(viewBeforeHtml, /Auto-Fix instructions/);
+    assert.match(viewBeforeHtml, /name="customInstructions"/);
     assert.match(viewBeforeHtml, /data-autofix-form/);
     assert.match(viewBeforeHtml, /Auto-Fix stages/);
     assert.match(viewBeforeHtml, /Load repository/);
@@ -168,12 +303,18 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Memory agent/);
     assert.match(viewBeforeHtml, /Memory Receipts/);
 
-    const autofix = await app.request(`/reports/${postBody.reportId}/autofix?dryRun=1`, { method: 'POST' });
+    const autofix = await app.request(`/reports/${postBody.reportId}/autofix?dryRun=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customInstructions: 'Keep the fix small and preserve the current UI copy.' }),
+    });
     assert.equal(autofix.status, 200);
     assert.deepEqual(dryRunCalls, [true]);
+    assert.deepEqual(customInstructionCalls, ['Keep the fix small and preserve the current UI copy.']);
     const autofixBody = await autofix.json();
     assert.equal(autofixBody.reportId, postBody.reportId);
     assert.equal(autofixBody.autofix.status, 'verified_no_pr');
+    assert.equal(autofixBody.autofix.customInstructions, 'Keep the fix small and preserve the current UI copy.');
     assert.equal(autofixBody.autofix.candidates[0].path, 'src/users.js');
     assert.equal(autofixBody.autofix.diagnosis.targetFiles[0], 'src/users.js');
     assert.equal(autofixBody.autofix.verification.ok, true);
@@ -183,6 +324,11 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.ok(autofixBody.autofix.stages.some((stage: { key: string; logs?: string[] }) => (
       stage.key === 'verification' && stage.logs?.some((line) => /node --check src\/users\.js/.test(line))
     )));
+    const memoryStage = autofixBody.autofix.stages.find((stage: { key: string }) => stage.key === 'memory');
+    assert.ok(memoryStage);
+    assert.equal(memoryStage.status, 'completed');
+    assert.match(memoryStage.detail, /markdown memory/);
+    assert.ok(memoryStage.logs.some((line: string) => /diagnosis memory: provider=github-markdown status=written/.test(line)));
     assert.ok(autofixBody.autofix.stages.some((stage: { key: string; status: string }) => (
       stage.key === 'memory' && stage.status === 'completed'
     )));
@@ -200,7 +346,13 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
 
     const htmlAutofix = await app.request(`/reports/${postBody.reportId}/autofix`, {
       method: 'POST',
-      headers: { Accept: 'text/html' },
+      headers: {
+        Accept: 'text/html',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        customInstructions: 'Update the plan: keep the fallback copy short before opening a PR.',
+      }),
     });
     assert.equal(htmlAutofix.status, 303);
     assert.equal(
@@ -208,19 +360,29 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
       `/reports/${postBody.reportId}/view#autofix-result`
     );
     assert.deepEqual(dryRunCalls, [true, false]);
+    assert.deepEqual(customInstructionCalls, [
+      'Keep the fix small and preserve the current UI copy.',
+      'Update the plan: keep the fallback copy short before opening a PR.',
+    ]);
 
     const handoff = await app.request(`/reports/${postBody.reportId}/handoff`);
     const handoffBody = await handoff.json();
-    assert.equal(handoffBody.autofix.status, 'verified_no_pr');
+    assert.equal(handoffBody.autofix.status, 'pr_opened');
     assert.match(handoffBody.agentComparison.memory.outcome, /verified/i);
 
     const viewAfter = await app.request(`/reports/${postBody.reportId}/view`);
     const viewAfterHtml = await viewAfter.text();
     assert.match(viewAfterHtml, /Auto-Fix Result/);
-    assert.match(viewAfterHtml, /Last stage: PR gate/);
+    assert.match(viewAfterHtml, /Auto-Fix plan/);
+    assert.match(viewAfterHtml, /Patch plan/);
+    assert.match(viewAfterHtml, /Candidate files/);
+    assert.match(viewAfterHtml, /User instructions/);
+    assert.match(viewAfterHtml, /Update the plan: keep the fallback copy short before opening a PR\./);
+    assert.match(viewAfterHtml, /data-stage="pr"/);
+    assert.match(viewAfterHtml, /PR gate/);
     assert.match(viewAfterHtml, /data-stage="memory" data-status="completed"/);
-    assert.match(viewAfterHtml, /Verified patch ready/);
-    assert.match(viewAfterHtml, /verified_no_pr/);
+    assert.match(viewAfterHtml, /PR opened|Auto-Fix Result/);
+    assert.match(viewAfterHtml, /pr_opened/);
     assert.match(viewAfterHtml, /src\/users\.js/);
     assert.match(viewAfterHtml, /Stage logs/);
     assert.match(viewAfterHtml, /node --check src\/users\.js/);
@@ -234,13 +396,64 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /Verification/);
 
     const record = await store.get(postBody.reportId);
-    assert.equal(record?.autofix?.status, 'verified_no_pr');
+    assert.equal(record?.autofix?.status, 'pr_opened');
   } finally {
     if (oldMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = oldMemoryDir;
     if (oldProvider === undefined) delete process.env.MEMORY_PROVIDER;
     else process.env.MEMORY_PROVIDER = oldProvider;
   }
+});
+
+test('POST /reports/:id/autofix says GBrain when diagnosis and outcome memory write natively', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/report.json', import.meta.url), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), 'lite-annotate-gbrain-stage-api-'));
+  const store = new ReportStore(join(root, 'reports'));
+  const memory: MemoryAdapter = {
+    async putReport(report) {
+      return { provider: 'gbrain', reportId: report.id, path: `bugs/${report.id}`, status: 'written' };
+    },
+    async searchSimilar() {
+      return [];
+    },
+    async putDiagnosis(reportId) {
+      return { provider: 'gbrain', reportId, path: `diagnosis/${reportId}`, status: 'written' };
+    },
+    async putOutcome(reportId) {
+      return { provider: 'gbrain', reportId, path: `outcomes/${reportId}`, status: 'written' };
+    },
+  };
+  const app = createApp({
+    store,
+    memory,
+    autofixRunner: async () => ({
+      status: 'verified_no_pr',
+      pipeline: {
+        candidates: [],
+        diagnosis: { rootCause: 'test diagnosis', targetFiles: [] },
+        patch: { ok: true, files: [] },
+        artifact: { type: 'fix_pr' },
+        verification: { ok: true, modifiedFiles: [], commands: [] },
+      },
+      pr: null,
+    }),
+  });
+
+  const post = await app.request('/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fixture),
+  });
+  const postBody = await post.json();
+
+  const autofix = await app.request(`/reports/${postBody.reportId}/autofix?dryRun=1`, { method: 'POST' });
+  assert.equal(autofix.status, 200);
+  const body = await autofix.json();
+  const memoryStage = body.autofix.stages.find((stage: { key: string }) => stage.key === 'memory');
+  assert.equal(memoryStage.status, 'completed');
+  assert.equal(memoryStage.detail, 'Diagnosis and outcome memory stored in GBrain.');
+  assert.ok(memoryStage.logs.some((line: string) => /diagnosis memory: provider=gbrain status=written/.test(line)));
+  assert.ok(memoryStage.logs.some((line: string) => /outcome memory: provider=gbrain status=written/.test(line)));
 });
 
 test('POST /reports/:id/repo updates the Auto-Fix target repo shown on the report page', async () => {

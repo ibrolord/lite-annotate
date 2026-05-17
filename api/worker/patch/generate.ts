@@ -1,6 +1,7 @@
 import type { RankedCandidateFile } from '../../indexing/code_index.js';
 import type { Diagnosis } from '../diagnosis/diagnosis.js';
 import { shouldPatchDiagnosis } from '../diagnosis/diagnosis.js';
+import type { PatchArtifactType } from '../patchability.js';
 import type { StructuredPatchFile } from './verification.js';
 
 export interface GeneratedPatch {
@@ -11,6 +12,7 @@ export interface GeneratedPatch {
   model?: string;
   summary?: string;
   risks?: string[];
+  artifactType?: PatchArtifactType;
 }
 
 function targetCandidates(diagnosis: Diagnosis, candidates: RankedCandidateFile[]): RankedCandidateFile[] {
@@ -100,5 +102,6 @@ export function generatePatchFromDiagnosis(
     files,
     source: 'deterministic',
     summary: 'Inserted a narrow missing-object fallback guard.',
+    artifactType: 'fix_pr',
   };
 }
