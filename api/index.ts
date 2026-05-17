@@ -922,32 +922,12 @@ function renderReportHtml(
   const instructionsOpen = previousAutofixInstructions ? ' open' : '';
   const networkEvent = primaryNetworkEvent(report);
   const networkSummary = networkEvent
-    ? `${networkEvent.method} ${networkEvent.url} -> ${networkEvent.status ?? 'n/a'}`
+    ? networkEventSummary(networkEvent)
     : 'No network breadcrumb captured';
   const consoleSummary = primaryConsoleMessage(report);
-  const autofixStatus = analysisStatus(autofix);
-  const decision = autofixStatus === 'pr_opened'
-    ? { tone: 'good', signal: 'PR opened', detail: 'Auto-Fix produced verified repo changes and opened a PR.' }
-    : autofixStatus === 'verified_no_pr'
-      ? { tone: 'good', signal: 'Verified locally', detail: 'Auto-Fix verified the report without opening a PR.' }
-      : autofixStatus === 'failed' || autofixStatus === 'external_blocker'
-        ? { tone: 'danger', signal: 'Blocked', detail: 'Auto-Fix needs attention before it can continue.' }
-        : triage?.verdict === 'real_bug' || triage?.nextAction === 'run_autofix'
-          ? { tone: 'warn', signal: 'Likely bug', detail: triage.headline || 'Triage found enough signal to run Auto-Fix.' }
-          : networkEvent || consoleSummary !== 'No console error captured'
-            ? { tone: 'warn', signal: 'Evidence captured', detail: 'The report includes browser evidence that should be reviewed.' }
-            : { tone: 'warn', signal: 'Needs review', detail: 'The report needs triage before code changes.' };
-  const actionCopy = autofixStatus === 'pr_opened'
-    ? { tone: 'good', label: 'Review PR', detail: 'A verified PR is ready for review.' }
-    : autofixStatus === 'verified_no_pr'
-      ? { tone: 'good', label: 'Review result', detail: 'Check the verified Auto-Fix result and decide whether another run is needed.' }
-      : autofixStatus === 'running'
-        ? { tone: 'warn', label: 'Wait for Auto-Fix', detail: 'The current Auto-Fix run is still active.' }
-        : autofixStatus === 'failed' || autofixStatus === 'external_blocker'
-          ? { tone: 'danger', label: 'Resolve blocker', detail: 'Open the Auto-Fix result for the blocking error.' }
-          : triage?.nextAction === 'run_autofix'
-            ? { tone: 'warn', label: 'Run Auto-Fix', detail: 'Use optional instructions if the fix needs constraints.' }
-            : { tone: 'warn', label: 'Triage first', detail: 'Run triage or preview Auto-Fix before opening a PR.' };
+  const decision = reportDecisionSummary(report, triage, autofix);
+  const actionCopy = reportActionCopy(triage, autofix);
+  const gbrainStatus = gbrainMemoryStatus(memoryImpact);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1025,9 +1005,59 @@ function renderReportHtml(
       color: var(--ink);
       font: 500 13px/1.45 system-ui, sans-serif;
     }
+    .action-panel {
+      display: grid;
+      gap: 8px;
+      min-width: min(460px, calc(100vw - 40px));
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: oklch(0.995 0.004 248 / .86);
+      box-shadow: 0 14px 28px oklch(0.42 0.04 248 / .06);
+    }
+    .action-panel form { display: contents; }
+    .action-instructions {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+    .action-instructions summary {
+      padding: 9px 11px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .action-instructions label { padding: 0 10px 10px; }
+    .decision-strip { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 12px; margin: 0 0 18px; }
+    .decision-card {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 26px oklch(0.42 0.04 248 / .05);
+    }
+    .decision-card[data-tone="good"] { border-left-color: var(--success); }
+    .decision-card[data-tone="warn"] { border-left-color: var(--warn); }
+    .decision-card[data-tone="danger"] { border-left-color: var(--danger); }
+    .decision-card span,
+    .triage-metric span,
+    .integration-meta span,
+    .evidence-chip-list span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 780;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .decision-card strong { font-size: 15px; line-height: 1.28; overflow-wrap: anywhere; }
+    .decision-card p { font-size: 13px; line-height: 1.42; }
     .stage-layout { display: grid; grid-template-columns: minmax(0, .62fr) minmax(300px, .38fr); gap: 18px; align-items: start; margin-bottom: 18px; }
-    .layout { display: grid; grid-template-columns: minmax(300px, .42fr) minmax(0, .58fr); gap: 18px; align-items: start; }
-    .inspector { position: sticky; top: 18px; display: grid; gap: 12px; }
     .stack { display: grid; gap: 12px; min-width: 0; }
     .surface { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: 0 16px 34px oklch(0.42 0.04 248 / .07); }
     .surface-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
@@ -1083,6 +1113,31 @@ function renderReportHtml(
     }
     .result-item strong { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
     .analysis-body { padding: 14px 16px 16px; }
+    .triage-callout { display: grid; gap: 10px; padding: 16px; }
+    .triage-copy { display: grid; gap: 6px; max-width: 82ch; }
+    .triage-copy strong { font-size: 18px; line-height: 1.25; }
+    .triage-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .triage-metric { display: grid; gap: 5px; min-width: 0; padding: 12px; border-right: 1px solid var(--line); }
+    .triage-metric:last-child { border-right: 0; }
+    .triage-metric strong { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+    .evidence-chip-list { display: grid; gap: 8px; padding: 0 16px 16px; }
+    .evidence-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .evidence-chips li {
+      max-width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--soft);
+      font-size: 13px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
     .analysis-summary { display: grid; gap: 10px; padding: 14px 16px; }
     .analysis-summary dl { display: grid; gap: 8px; margin: 0; }
     .analysis-summary div { display: grid; grid-template-columns: 104px 1fr; gap: 10px; align-items: baseline; }
@@ -1254,6 +1309,23 @@ function renderReportHtml(
       font: 760 12px ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     .receipt-list strong { display: block; margin-bottom: 3px; }
+    .integration-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 0 16px 16px; }
+    .integration-meta div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--soft);
+    }
+    .integration-meta strong { font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+    .advanced-panel { margin-top: 12px; }
+    .advanced-panel > summary { padding: 15px 16px; }
+    .advanced-body { display: grid; gap: 14px; padding: 0 16px 16px; }
+    .advanced-section { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .advanced-section:first-child { border-top: 0; padding-top: 0; }
+    .advanced-section h2 { font-size: 16px; }
     .investigation-summary { display: grid; gap: 12px; padding: 14px 16px 16px; }
     .investigation-summary strong { display: block; line-height: 1.35; }
     .investigation-summary .root-cause { color: var(--ink); }
@@ -1324,14 +1396,18 @@ function renderReportHtml(
     @media (max-width: 900px) {
       header { display: block; }
       .actions { justify-content: flex-start; margin-top: 14px; }
+      .action-panel { min-width: 0; width: 100%; }
+      .decision-strip,
       .stage-layout,
-      .layout { grid-template-columns: 1fr; }
+      .integration-meta { grid-template-columns: 1fr; }
       .result-grid { grid-template-columns: 1fr; }
+      .triage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .triage-metric:nth-child(2n) { border-right: 0; }
+      .triage-metric:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
       .result-item,
       .result-item:nth-child(2n),
       .result-item:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--line); }
       .result-item:last-child { border-bottom: 0; }
-      .inspector { position: static; }
       .comparison { grid-template-columns: 1fr; }
       .agent-column { border-right: 0; border-bottom: 1px solid var(--line); }
       .agent-column:last-child { border-bottom: 0; }
@@ -1340,6 +1416,13 @@ function renderReportHtml(
       .evidence-row, .safety-row { grid-template-columns: 1fr; gap: 4px; }
       .investigation-evidence li { grid-template-columns: 1fr; gap: 4px; }
       .repo-control { grid-template-columns: 1fr; }
+      .autofix-action-buttons { justify-content: stretch; }
+      .autofix-action-buttons button { width: 100%; }
+      .triage-metrics { grid-template-columns: 1fr; }
+      .triage-metric,
+      .triage-metric:nth-child(2n),
+      .triage-metric:nth-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--line); }
+      .triage-metric:last-child { border-bottom: 0; }
     }
   </style>
 </head>
@@ -1396,17 +1479,17 @@ function renderReportHtml(
     </header>
     <section class="decision-strip" aria-label="Report decision summary">
       <div class="decision-card" data-tone="${escapeHtml(decision.tone)}">
-        <span>Signal</span>
+        <span>Verdict</span>
         <strong>${escapeHtml(decision.signal)}</strong>
         <p>${escapeHtml(decision.detail)}</p>
       </div>
       <div class="decision-card">
-        <span>Likely failure</span>
+        <span>Failure</span>
         <strong>${escapeHtml(consoleSummary)}</strong>
         <p>${escapeHtml(networkSummary)}</p>
       </div>
       <div class="decision-card" data-tone="${escapeHtml(actionCopy.tone)}">
-        <span>Next action</span>
+        <span>Next</span>
         <strong>${escapeHtml(actionCopy.label)}</strong>
         <p>${escapeHtml(actionCopy.detail)}</p>
       </div>
@@ -1421,12 +1504,14 @@ function renderReportHtml(
       </section>
       <section class="surface">
         <div class="surface-head">
-          <h2>Interaction summary</h2>
+          <h2>Evidence</h2>
         </div>
         <div class="evidence-list">
           <div class="evidence-row"><span>Page target</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
-          <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(primaryConsoleMessage(report))}</strong></div>
-          <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} → ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
+          <div class="evidence-row"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
+          <div class="evidence-row"><span>Target repo</span><strong>${escapeHtml(report.repo)}</strong></div>
+          <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(consoleSummary)}</strong></div>
+          <div class="evidence-row"><span>Network</span><strong>${escapeHtml(networkSummary)}</strong></div>
         </div>
       </section>
     </section>
@@ -1437,6 +1522,18 @@ function renderReportHtml(
       </div>
       ${renderTriageHtml(reportId, triage)}
     </section>
+    <section class="surface autofix-result" id="gbrain-memory">
+      <div class="surface-head">
+        <h2>GBrain Memory</h2>
+        <span class="${escapeHtml(gbrainStatus.className)}">${escapeHtml(gbrainStatus.label)}</span>
+      </div>
+      ${renderMemoryImpactHtml(memoryImpact)}
+      <div class="integration-meta">
+        <div><span>Role</span><strong>Prior bug lookup</strong></div>
+        <div><span>Writeback</span><strong>${escapeHtml(memoryImpact.outcomeMemory)}</strong></div>
+        <div><span>Similar reports</span><strong>${memoryImpact.similarCount}</strong></div>
+      </div>
+    </section>
     <section class="surface autofix-result" id="autofix-result">
       <div class="surface-head">
         <h2>Auto-Fix Result</h2>
@@ -1444,25 +1541,12 @@ function renderReportHtml(
       </div>
       ${renderAnalysisResultHtml(reportId, autofix)}
     </section>
-    <div class="layout">
-      <aside class="inspector">
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Evidence brief</h2>
-          </div>
-          <div class="evidence-list">
-            <div class="evidence-row"><span>Route</span><strong>${escapeHtml(report.route)}</strong></div>
-            <div class="evidence-row"><span>Target repo</span><strong>${escapeHtml(report.repo)}</strong></div>
-            <div class="evidence-row"><span>Annotation</span><strong>${escapeHtml(report.annotation.target || 'No target pinned')}</strong></div>
-            <div class="evidence-row"><span>Browser error</span><strong>${escapeHtml(primaryConsoleMessage(report))}</strong></div>
-            <div class="evidence-row"><span>Network</span><strong>${escapeHtml(report.network[0] ? `${report.network[0].method} ${report.network[0].url} -> ${report.network[0].status ?? 'n/a'}` : 'No network breadcrumb captured')}</strong></div>
-          </div>
-        </section>
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Target repo</h2>
-            <span class="status-pill">Auto-Fix input</span>
-          </div>
+    ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
+    <details class="advanced-panel">
+      <summary>Advanced: repo, memory receipts, agent comparison, debug payloads</summary>
+      <div class="advanced-body">
+        <section class="advanced-section">
+          <h2>Target repo</h2>
           <form class="repo-form" method="post" action="/reports/${encodeURIComponent(reportId)}/repo">
             <label for="target-repo">GitHub repository</label>
             <div class="repo-control">
@@ -1472,38 +1556,23 @@ function renderReportHtml(
             <p>Preview Auto-Fix and Open PR with Auto-Fix use this repository for file ranking, patch verification, and PR creation.</p>
           </form>
         </section>
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Action safety</h2>
-          </div>
+        <section class="advanced-section">
+          <h2>Action safety</h2>
           <div class="safety-list">
             <div class="safety-row"><span>Safe validation</span><div><strong>Preview Auto-Fix</strong><p>Verifies diagnosis and patch gates without opening a public PR.</p></div></div>
             <div class="safety-row"><span>PR-opening action</span><div><strong>Open PR with Auto-Fix</strong><p>Can open a GitHub PR when credentials and verification gates allow it.</p></div></div>
           </div>
         </section>
-        ${renderGStackInvestigationHtml(reportId, report, gstackReview)}
-      </aside>
-      <section class="stack">
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Memory Impact</h2>
-          </div>
-          ${renderMemoryImpactHtml(memoryImpact)}
-        </section>
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Cold Agent vs Memory Agent</h2>
-          </div>
+        <section class="advanced-section">
+          <h2>Cold Agent vs Memory Agent</h2>
           ${renderAgentComparisonHtml(agentComparison)}
         </section>
-        <section class="surface">
-          <div class="surface-head">
-            <h2>Memory Receipts</h2>
-          </div>
+        <section class="advanced-section">
+          <h2>Memory Receipts</h2>
           ${renderMemoryReceiptsHtml(memoryReceipts)}
         </section>
-        <details>
-          <summary>Debug payloads</summary>
+        <section class="advanced-section">
+          <h2>Debug payloads</h2>
           <h3 class="raw-label">Normalized Report</h3>
           <pre>${escapeHtml(JSON.stringify(report, null, 2))}</pre>
           <h3 class="raw-label">Raw Saved Payload</h3>
@@ -1514,9 +1583,9 @@ function renderReportHtml(
           <pre>${escapeHtml(JSON.stringify(similar, null, 2))}</pre>
           <h3 class="raw-label">Triage</h3>
           <pre>${escapeHtml(JSON.stringify(triage, null, 2))}</pre>
-        </details>
-      </section>
-    </div>
+        </section>
+      </div>
+    </details>
   </main>
   <script>
     (() => {
@@ -1888,6 +1957,25 @@ function memoryProviderLabel(memory: unknown, topMemory: MemorySearchResult | nu
   return topMemory?.provider ?? 'memory';
 }
 
+function gbrainMemoryStatus(summary: MemoryImpactSummary): { label: string; className: string } {
+  if (summary.source === 'gbrain') {
+    return {
+      label: summary.similarCount > 0 ? 'GBrain connected' : 'GBrain connected · no match',
+      className: summary.similarCount > 0 ? 'status-pill' : 'status-pill info',
+    };
+  }
+  if (summary.source === 'github-markdown') {
+    return {
+      label: summary.similarCount > 0 ? 'local memory fallback' : 'local fallback · no match',
+      className: summary.similarCount > 0 ? 'status-pill info' : 'status-pill neutral',
+    };
+  }
+  return {
+    label: summary.similarCount > 0 ? `${summary.source} memory` : `${summary.source} · no match`,
+    className: summary.similarCount > 0 ? 'status-pill info' : 'status-pill neutral',
+  };
+}
+
 function buildAgentComparison(memoryImpact: MemoryImpactSummary, autofix: unknown): AgentComparison {
   const summary = summarizeStoredAutofix(autofix);
   const targetFile = summary.targetFiles[0] ?? summary.candidateFiles[0] ?? 'candidate files';
@@ -1988,11 +2076,11 @@ function buildGStackInvestigation(
       ? `GStack ${workflowLabel} is queued.`
       : status === 'running'
         ? `GStack is running ${workflowLabel} against this report.`
-        : 'No GStack workflow has run yet.');
+        : 'GStack review has not run yet.');
   const rootCause = result?.rootCause
     ?? result?.diagnosis
     ?? (result?.summary && status !== 'queued' && status !== 'running' ? result.summary : '')
-    ?? 'Run a GStack workflow to trace the browser evidence into the repository.';
+    ?? 'Optional external runner for investigation, QA, or shipping review. It is separate from the default Auto-Fix runtime path.';
   const evidence = buildGStackEvidence(report, result);
   const confidence = result?.confidence ?? gstackConfidence(status, result, evidence);
 
@@ -2505,7 +2593,7 @@ function renderGStackInvestigationHtml(
     data-gstack-active="${active ? 'true' : 'false'}"
   >
     <div class="surface-head">
-      <h2>GStack Investigation</h2>
+      <h2>GStack Review</h2>
       <span class="${gstackStatusClassName(investigation.status)}" data-gstack-status>${escapeHtml(investigation.status)}</span>
     </div>
     <div class="investigation-summary">
@@ -2520,7 +2608,7 @@ function renderGStackInvestigationHtml(
     </div>
     <div class="gstack-console" aria-live="polite">
       <div class="gstack-console-head">
-        <span>Live runner console</span>
+        <span>Runner console</span>
         <span data-gstack-console-state>${escapeHtml(investigation.status)}</span>
       </div>
       <pre data-gstack-console>${escapeHtml(gstackConsoleText(investigation))}</pre>

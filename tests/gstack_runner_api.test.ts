@@ -147,7 +147,7 @@ test('GStack review endpoint creates remote job and callback stores result', asy
 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
-    assert.match(html, /GStack Investigation/);
+    assert.match(html, /GStack Review/);
     assert.match(html, /Missing-user path crashes after a 404/);
     assert.match(html, /Run Auto-Fix with this investigation/);
     assert.match(html, /id="gstack-review"/);
@@ -228,7 +228,7 @@ test('GStack investigation button redirects back to the report and shows queued 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
     assert.match(html, /data-gstack-active="true"/);
-    assert.match(html, /Live runner console/);
+    assert.match(html, /Runner console/);
     assert.match(html, /GStack investigation is queued/);
     assert.match(html, /gstack_job_ui_123/);
     assert.match(html, /Runner response/);
@@ -311,7 +311,7 @@ test('GStack QA button creates a qa job without PR permissions by default', asyn
 
     const view = await app.request(`/reports/${posted.reportId}/view`);
     const html = await view.text();
-    assert.match(html, /Live runner console/);
+    assert.match(html, /Runner console/);
     assert.match(html, /\$ workflow: qa/);
     assert.match(html, /GStack QA is queued/);
     assert.match(html, /gstack_job_qa_123/);

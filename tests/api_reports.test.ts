@@ -288,8 +288,10 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Load repository/);
     assert.match(viewBeforeHtml, /PR gate/);
     assert.match(viewBeforeHtml, /Captured screen/);
-    assert.match(viewBeforeHtml, /Interaction summary/);
-    assert.match(viewBeforeHtml, /Evidence brief/);
+    assert.match(viewBeforeHtml, /Evidence/);
+    assert.match(viewBeforeHtml, /Verdict/);
+    assert.match(viewBeforeHtml, /Failure/);
+    assert.match(viewBeforeHtml, /Next/);
     assert.match(viewBeforeHtml, /Target repo/);
     assert.match(viewBeforeHtml, new RegExp(`action="/reports/${postBody.reportId}/repo"`));
     assert.match(viewBeforeHtml, /ibrolord\/lite-annotate-demo/);
@@ -302,6 +304,8 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewBeforeHtml, /Cold agent/);
     assert.match(viewBeforeHtml, /Memory agent/);
     assert.match(viewBeforeHtml, /Memory Receipts/);
+    assert.match(viewBeforeHtml, /GBrain Memory/);
+    assert.match(viewBeforeHtml, /GStack Review/);
 
     const autofix = await app.request(`/reports/${postBody.reportId}/autofix?dryRun=1`, {
       method: 'POST',
@@ -388,7 +392,7 @@ test('POST /reports/:id/autofix stores and exposes analysis results', async () =
     assert.match(viewAfterHtml, /node --check src\/users\.js/);
     assert.match(viewAfterHtml, new RegExp(`data-analysis-src="/reports/${postBody.reportId}/autofix"`));
     assert.doesNotMatch(viewAfterHtml, /THIS_ANALYSIS_BODY_SHOULD_NOT_BE_INLINE/);
-    assert.match(viewAfterHtml, /Memory Impact/);
+    assert.match(viewAfterHtml, /GBrain Memory/);
     assert.match(viewAfterHtml, /Similar bug memory found/);
     assert.match(viewAfterHtml, /Reusable evidence cue/i);
     assert.match(viewAfterHtml, /Current browser report/);
